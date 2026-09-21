@@ -15,6 +15,15 @@
     { value: 'Instalación', label: 'Instalación' },
   ];
 
+  function calculateWorkMinutes(start, end) {
+    if (!start || !end) return '';
+    const toMinutes = time => {
+      const [hours, minutes] = time.split(':').map(Number);
+      return hours * 60 + minutes;
+    };
+    return (toMinutes(end) - toMinutes(start) + 1440) % 1440;
+  }
+
   function getToday() {
     return new Date().toISOString().slice(0, 10);
   }
@@ -52,7 +61,6 @@
       actividadRealizada: '',
       horaInicio: '',
       horaFinal: '',
-      tiempoTrabajo: '',
       firstTimeFix: '',
       estadoFinal: '',
       tecnico: '',
@@ -63,8 +71,25 @@
   function useAutosize(ref, value) {
     useLayoutEffect(() => {
       if (!ref.current) return;
-      ref.current.style.height = 'auto';
-      ref.current.style.height = ref.current.scrollHeight + 'px';
+      const element = ref.current;
+      const resize = () => {
+        element.style.height = '0px';
+        element.style.height = element.scrollHeight + 'px';
+      };
+      resize();
+      let width = element.getBoundingClientRect().width;
+      const observer = new ResizeObserver(() => {
+        const nextWidth = element.getBoundingClientRect().width;
+        if (nextWidth !== width) { width = nextWidth; resize(); }
+      });
+      observer.observe(element);
+      window.addEventListener('beforeprint', resize);
+      window.addEventListener('afterprint', resize);
+      return () => {
+        observer.disconnect();
+        window.removeEventListener('beforeprint', resize);
+        window.removeEventListener('afterprint', resize);
+      };
     }, [value, ref]);
   }
 
@@ -78,7 +103,7 @@
         ref=${textRef}
         className=${className}
         value=${value}
-        rows=${rows}
+        rows=${rows || 1}
         placeholder=${placeholder}
         aria-label=${ariaLabel}
         onInput=${onInput}
@@ -140,6 +165,87 @@
     `;
   }
 
+  function SignaturePad({ label, initialValue, onSave, onClose }) {
+    const dialogRef = useRef(null);
+    const canvasRef = useRef(null);
+    const pointer = useRef(null);
+    const [hasInk, setHasInk] = useState(Boolean(initialValue));
+
+    useEffect(() => {
+      const dialog = dialogRef.current;
+      const previousFocus = document.activeElement;
+      dialog.showModal();
+      const previousOverflow = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      let active = true;
+      if (initialValue) {
+        const image = new Image();
+        image.onload = () => {
+          if (active) canvasRef.current.getContext('2d').drawImage(image, 0, 0, 900, 300);
+        };
+        image.src = initialValue;
+      }
+      return () => {
+        active = false;
+        document.body.style.overflow = previousOverflow;
+        if (previousFocus && previousFocus.isConnected) previousFocus.focus();
+      };
+    }, []);
+
+    function point(event) {
+      const bounds = canvasRef.current.getBoundingClientRect();
+      return [(event.clientX - bounds.left) * 900 / bounds.width,
+        (event.clientY - bounds.top) * 300 / bounds.height];
+    }
+
+    function start(event) {
+      if (pointer.current !== null || (event.pointerType === 'mouse' && event.button !== 0)) return;
+      event.preventDefault();
+      pointer.current = event.pointerId;
+      event.currentTarget.setPointerCapture(event.pointerId);
+      const ctx = canvasRef.current.getContext('2d');
+      const [x, y] = point(event);
+      ctx.strokeStyle = '#142337';
+      ctx.fillStyle = '#142337';
+      ctx.lineWidth = 3;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.beginPath(); ctx.arc(x, y, 1.5, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(x, y);
+      setHasInk(true);
+    }
+
+    function move(event) {
+      if (pointer.current !== event.pointerId) return;
+      event.preventDefault();
+      const ctx = canvasRef.current.getContext('2d');
+      ctx.lineTo(...point(event)); ctx.stroke();
+    }
+
+    function stop(event) {
+      if (pointer.current === event.pointerId) pointer.current = null;
+    }
+
+    return html`
+      <dialog ref=${dialogRef} className="signature-dialog" aria-labelledby="signature-title"
+        onCancel=${event => { event.preventDefault(); onClose(); }}>
+        <h2 id="signature-title">Firma de ${label}</h2>
+        <p>Firma con el dedo, lápiz táctil o mouse dentro del recuadro.</p>
+        <canvas ref=${canvasRef} width="900" height="300" aria-label=${`Área para firmar: ${label}`}
+          onPointerDown=${start} onPointerMove=${move} onPointerUp=${stop}
+          onPointerCancel=${stop} onLostPointerCapture=${stop} />
+        <div className="signature-actions">
+          <button type="button" className="secondary" onClick=${() => {
+            canvasRef.current.getContext('2d').clearRect(0, 0, 900, 300);
+            setHasInk(false);
+          }}>Borrar trazo</button>
+          <button type="button" className="secondary" onClick=${onClose}>Cancelar</button>
+          <button type="button" disabled=${!hasInk} onClick=${() => onSave(canvasRef.current.toDataURL('image/png'))}>Guardar firma</button>
+        </div>
+      </dialog>
+    `;
+  }
+
   function App() {
     const [currentUser, setCurrentUser] = useState(null);
     const [loginUser, setLoginUser] = useState('');
@@ -151,6 +257,8 @@
     const [repuestoRows, setRepuestoRows] = useState(createInitialRepuestoRows);
     const [pdfGenerating, setPdfGenerating] = useState(false);
     const sheetRef = useRef(null);
+    const [signatures, setSignatures] = useState({ tecnico: '', cliente: '' });
+    const [signatureTarget, setSignatureTarget] = useState(null);
 
     useEffect(() => {
       const saved = sessionStorage.getItem('loggedUser');
@@ -204,6 +312,8 @@
     }
 
     function clearForm() {
+      setSignatures({ tecnico: '', cliente: '' });
+      setSignatureTarget(null);
       setReportNumber('');
       setForm(createInitialForm());
       setEquipoRows(createInitialEquipoRows());
@@ -223,6 +333,8 @@
     }
 
     function handleLogout() {
+      setSignatures({ tecnico: '', cliente: '' });
+      setSignatureTarget(null);
       setCurrentUser(null);
       sessionStorage.removeItem('loggedUser');
     }
@@ -319,6 +431,7 @@
               <h1>REPORTE DE SERVICIO</h1>
               <small>Departamento Biomédico</small>
             </div>
+            <img className="brand-logo" src="assets/totalcare-pharma.png" alt="TotalCare Pharma" />
             <div className="report-number">
               <label htmlFor="numeroReporte">Número de reporte</label>
               <input
@@ -614,7 +727,7 @@
               <div className="section-body grid cols-2">
                 <div className="field" style=${{ gap: '10px' }}>
                   <label>Control de tiempos</label>
-                  <div className="grid cols-2" style=${{ gap: '8px' }}>
+                  <div className="grid cols-2 time-grid" style=${{ gap: '8px' }}>
                     <div>
                       <small style=${{ color: 'var(--muted)' }}>Hora inicio</small>
                       <input type="time" value=${form.horaInicio} onInput=${updateField('horaInicio')} />
@@ -625,9 +738,8 @@
                     </div>
                     <div>
                       <small style=${{ color: 'var(--muted)' }}>Tiempo de trabajo (min)</small>
-                      <input type="number" min="0" step="1" value=${form.tiempoTrabajo} onInput=${updateField('tiempoTrabajo')} />
+                      <input type="number" aria-label="Tiempo de trabajo (min)" readOnly value=${calculateWorkMinutes(form.horaInicio, form.horaFinal)} />
                     </div>
-                    <div></div>
                   </div>
                   <div>
                     <small style=${{ color: 'var(--muted)' }}>First time fix</small>
@@ -707,11 +819,32 @@
             </div>
 
             <div className="signature">
-              <div className="line">Servicio técnico</div>
-              <div className="line">Cliente</div>
+              ${[['tecnico', 'Servicio técnico'], ['cliente', 'Cliente']].map(([key, label]) => html`
+                <div key=${key} className="signature-slot">
+                  <div className="signature-controls">
+                    <button type="button" className="secondary" onClick=${() => setSignatureTarget(key)}>
+                      ${signatures[key] ? 'Editar firma' : 'Firmar'} — ${label}
+                    </button>
+                    ${signatures[key] && html`<button type="button" className="secondary"
+                      onClick=${() => setSignatures(prev => ({ ...prev, [key]: '' }))}>Quitar firma</button>`}
+                  </div>
+                  <div className="signature-space">
+                    ${signatures[key] && html`<img src=${signatures[key]} alt=${`Firma de ${label}`} />`}
+                  </div>
+                  <div className="line">${label}</div>
+                </div>
+              `)}
             </div>
           </div>
         </div>
+        ${signatureTarget && html`<${SignaturePad}
+          label=${signatureTarget === 'tecnico' ? 'servicio técnico' : 'cliente'}
+          initialValue=${signatures[signatureTarget]}
+          onClose=${() => setSignatureTarget(null)}
+          onSave=${image => {
+            setSignatures(prev => ({ ...prev, [signatureTarget]: image }));
+            setSignatureTarget(null);
+          }} />`}
       </div>
     `;
   }
