@@ -1,6 +1,38 @@
 ﻿(function () {
   const { useState, useEffect, useRef, useLayoutEffect } = React;
   const html = htm.bind(React.createElement);
+  const BRANDS = [
+    { id: 'totalcare', name: 'TotalCare Pharma', logo: 'assets/totalcare-pharma.png', colors: 'Azul marino y turquesa' },
+    { id: 'pharmadial', name: 'Pharmadial', logo: 'assets/pharmadial.png', colors: 'Azul y blanco' },
+    { id: 'mancheno', name: 'Distribuidora Mancheno', logo: 'assets/distribuidora-mancheno.png', colors: 'Negro, gris y blanco' },
+  ];
+
+  function BrandPicker({ selected, onSelect, onClose }) {
+    const ref = useRef(null);
+    useEffect(() => {
+      const focused = document.activeElement;
+      ref.current.showModal();
+      const previous = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      return () => {
+        document.body.style.overflow = previous;
+        if (focused && focused.isConnected) focused.focus();
+      };
+    }, []);
+    return html`<dialog ref=${ref} className="brand-picker" aria-labelledby="brand-title"
+      onCancel=${event => { event.preventDefault(); if (selected) onClose(); }}>
+      <h2 id="brand-title">¿Qué logo deseas usar?</h2>
+      <p>Elige la empresa para este reporte. Su logo y colores se aplicarán también al imprimir.</p>
+      <div className="brand-options">
+        ${BRANDS.map(brand => html`<button key=${brand.id} type="button" className="brand-option"
+          aria-pressed=${selected === brand.id} onClick=${() => onSelect(brand.id)}>
+          <img src=${brand.logo} alt="" />
+          <strong>${brand.name}</strong><span>${brand.colors}</span>
+        </button>`)}
+      </div>
+      ${selected && html`<button type="button" className="secondary" onClick=${onClose}>Cancelar</button>`}
+    </dialog>`;
+  }
 
   const USERS = [
     { user: 'usuario1', pass: '1234', nombre: 'Usuario 1' },
@@ -112,6 +144,8 @@
   }
 
   function LoginOverlay(props) {
+    const [showPassword, setShowPassword] = useState(false);
+    useEffect(() => { setShowPassword(false); }, [props.visible]);
     const {
       visible,
       loginUser,
@@ -125,11 +159,36 @@
 
     return html`
       <div className=${`login-overlay ${visible ? '' : 'hidden'}`} id="loginOverlay">
+        <div className="login-shell">
+        <div className="login-intro">
+          <div className="login-brand">
+          <div className="login-emblem" aria-hidden="true">RS</div>
+          <div>
+          <div className="login-wordmark">REPORTE DE SERVICIO</div>
+          <p>Departamento Biomédico</p>
+          </div></div>
+          <div className="login-presentation">
+            <h1>Equipos que<br />mantienen vidas<br /><span>en movimiento</span></h1>
+            <p>Gestión de reportes de servicio para el soporte de equipos biomédicos.</p>
+            <div className="login-benefits">
+              <div><span aria-hidden="true">♡</span><p>Cuidado en<br />cada servicio</p></div>
+              <div><span aria-hidden="true">⚒</span><p>Gestión eficiente<br />de reportes</p></div>
+              <div><span aria-hidden="true">▥</span><p>Información<br />organizada</p></div>
+            </div>
+          </div>
+          <p className="login-quote">“Equipos en buen estado,<br />para un mejor mañana”</p>
+        </div>
+        <div className="login-access">
+        <p className="login-motto">Tecnología al servicio de la salud</p>
         <div className="login-card">
-          <div className="login-logo" aria-hidden="true">RS</div>
+          <div className="login-card-brand">
+            <div className="login-emblem" aria-hidden="true">RS</div>
+            <div className="login-wordmark">REPORTE DE SERVICIO</div>
+            <p>Departamento Biomédico</p>
+          </div>
           <div className="login-copy">
-            <h2>Acceso</h2>
-            <p>Sistema de reporte de servicio</p>
+            <h2>Bienvenido</h2>
+            <p>Ingresa tus datos para comenzar.</p>
           </div>
           <div>
             <label htmlFor="loginUser">Usuario</label>
@@ -137,7 +196,7 @@
               id="loginUser"
               type="text"
               autoComplete="username"
-              placeholder="usuario1"
+              placeholder="Escribe tu usuario"
               value=${loginUser}
               onInput=${onUserChange}
               onKeyUp=${(e) => { if (e.key === 'Enter') onLogin(); }}
@@ -145,21 +204,33 @@
           </div>
           <div>
             <label htmlFor="loginPass">Contraseña</label>
-            <input
+            <div className="login-password-wrap"><input
               id="loginPass"
-              type="password"
+              type=${showPassword ? 'text' : 'password'}
               autoComplete="current-password"
-              placeholder="******"
+              placeholder="Escribe tu contraseña"
               value=${loginPass}
               onInput=${onPassChange}
               onKeyUp=${(e) => { if (e.key === 'Enter') onLogin(); }}
-            />
+            /><button type="button" className="password-toggle" aria-label=${showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+              aria-pressed=${showPassword} onClick=${() => setShowPassword(value => !value)}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" />
+                <circle cx="12" cy="12" r="3" />
+                ${showPassword && html`<path d="M3 3l18 18" />`}
+              </svg>
+            </button></div>
           </div>
-          <div className="login-error" id="loginError">${loginError}</div>
+          <div className="login-error" id="loginError" role="status">${loginError}</div>
           <div className="login-actions">
             <button className="secondary" id="loginClear" type="button" onClick=${onClear}>Limpiar</button>
-            <button id="loginBtn" type="button" onClick=${onLogin}>Entrar</button>
+            <button id="loginBtn" type="button" onClick=${onLogin}>Ingresar <span aria-hidden="true">→</span></button>
           </div>
+          <p className="login-footnote">Al ingresar podrás elegir la empresa de tu reporte.</p>
+        </div>
+        <div className="login-mobile-benefits" aria-hidden="true"><span>♡<small>Cuidado</small></span><span>⚒<small>Eficiencia</small></span><span>▥<small>Resultados</small></span></div>
+        <p className="login-bottom-motto">Tecnología al servicio de la salud</p>
+        </div>
         </div>
       </div>
     `;
@@ -247,6 +318,10 @@
   }
 
   function App() {
+    const [brandId, setBrandId] = useState(null);
+    const [choosingBrand, setChoosingBrand] = useState(true);
+    const brand = BRANDS.find(item => item.id === brandId) || BRANDS[0];
+    useLayoutEffect(() => { document.body.dataset.brand = brand.id; }, [brand.id]);
     const [currentUser, setCurrentUser] = useState(null);
     const [loginUser, setLoginUser] = useState('');
     const [loginPass, setLoginPass] = useState('');
@@ -255,6 +330,7 @@
     const [form, setForm] = useState(createInitialForm);
     const [equipoRows, setEquipoRows] = useState(createInitialEquipoRows);
     const [repuestoRows, setRepuestoRows] = useState(createInitialRepuestoRows);
+    const [repuestosEnabled, setRepuestosEnabled] = useState(true);
     const [pdfGenerating, setPdfGenerating] = useState(false);
     const sheetRef = useRef(null);
     const [signatures, setSignatures] = useState({ tecnico: '', cliente: '' });
@@ -312,6 +388,7 @@
     }
 
     function clearForm() {
+      setRepuestosEnabled(true);
       setSignatures({ tecnico: '', cliente: '' });
       setSignatureTarget(null);
       setReportNumber('');
@@ -327,6 +404,8 @@
         return;
       }
       setCurrentUser(found);
+      setBrandId(null);
+      setChoosingBrand(true);
       sessionStorage.setItem('loggedUser', JSON.stringify(found));
       setLoginError('');
       clearForm();
@@ -431,7 +510,7 @@
               <h1>REPORTE DE SERVICIO</h1>
               <small>Departamento Biomédico</small>
             </div>
-            <img className="brand-logo" src="assets/totalcare-pharma.png" alt="TotalCare Pharma" />
+            <img className="brand-logo" src=${brand.logo} alt=${brand.name} />
             <div className="report-number">
               <label htmlFor="numeroReporte">Número de reporte</label>
               <input
@@ -452,6 +531,7 @@
             ` : null}
             <div className="spacer"></div>
             <div className="buttons">
+              <button className="secondary" type="button" onClick=${() => setChoosingBrand(true)}>Cambiar logo</button>
               <button className="secondary" id="logoutBtn" type="button" onClick=${handleLogout}>Salir</button>
               <button id="pdfBtn" type="button" disabled=${pdfGenerating} onClick=${downloadPDF}>
                 ${pdfGenerating ? 'Generando...' : 'Descargar PDF'}
@@ -650,7 +730,7 @@
               <div className="section-header">3. Actividad realizada</div>
               <div className="section-body">
                 <${AutosizeTextarea}
-                  className="autosize"
+                  className="autosize activity-textarea"
                   value=${form.actividadRealizada}
                   placeholder="Describe brevemente la actividad ejecutada..."
                   onInput=${updateField('actividadRealizada')}
@@ -658,15 +738,18 @@
               </div>
             </div>
 
-            <div className="section">
+            <div className=${`section repuestos-section${repuestosEnabled ? '' : ' print-excluded'}`}>
               <div className="section-header">
-                <span>4. Repuestos utilizados</span>
-                <div>
-                  <button className="secondary" type="button" id="removeRepuesto" onClick=${removeRepuestoRow}>Eliminar fila</button>
-                  <button className="secondary" type="button" id="addRepuesto" onClick=${addRepuestoRow}>Agregar fila</button>
+                <span>${repuestosEnabled ? '4. Repuestos utilizados' : 'Repuestos utilizados — desactivado'}</span>
+                <div className="repuestos-actions">
+                  <button className="secondary" type="button" aria-controls="repuestos-body" aria-expanded=${repuestosEnabled}
+                    onClick=${() => setRepuestosEnabled(prev => !prev)}>${repuestosEnabled ? 'Desactivar sección' : 'Activar sección'}</button>
+                  <button className="secondary" type="button" id="removeRepuesto" disabled=${!repuestosEnabled} onClick=${removeRepuestoRow}>Eliminar fila</button>
+                  <button className="secondary" type="button" id="addRepuesto" disabled=${!repuestosEnabled} onClick=${addRepuestoRow}>Agregar fila</button>
                 </div>
               </div>
-              <div className="section-body">
+              ${!repuestosEnabled && html`<p className="repuestos-notice">Esta sección no se imprimirá. Puedes activarla de nuevo sin perder los datos.</p>`}
+              <div className="section-body" id="repuestos-body" hidden=${!repuestosEnabled}>
                 <div className="table-wrap">
                   <table id="repuestoTable">
                     <thead>
@@ -723,7 +806,7 @@
             </div>
 
             <div className="section">
-              <div className="section-header">5. Resultado</div>
+              <div className="section-header">${repuestosEnabled ? '5. Resultado' : '4. Resultado'}</div>
               <div className="section-body grid cols-2">
                 <div className="field" style=${{ gap: '10px' }}>
                   <label>Control de tiempos</label>
@@ -837,6 +920,9 @@
             </div>
           </div>
         </div>
+        ${currentUser && choosingBrand && html`<${BrandPicker} selected=${brandId}
+          onClose=${() => setChoosingBrand(false)}
+          onSelect=${id => { setBrandId(id); setChoosingBrand(false); }} />`}
         ${signatureTarget && html`<${SignaturePad}
           label=${signatureTarget === 'tecnico' ? 'servicio técnico' : 'cliente'}
           initialValue=${signatures[signatureTarget]}
