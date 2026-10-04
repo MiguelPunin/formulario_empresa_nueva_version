@@ -1,10 +1,7 @@
 ﻿(function () {
   function createAppState() {
-    const USERS = [
-      { user: 'usuario1', pass: '1234', nombre: 'Usuario 1' },
-      { user: 'usuario2', pass: '1234', nombre: 'Usuario 2' },
-      { user: 'usuario3', pass: '1234', nombre: 'Usuario 3' },
-    ];
+    // Legacy module, not loaded by index.html. Authentication is server-side.
+    const USERS = [];
     let currentUser = null;
 
     function findUser(user, pass) {

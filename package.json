@@ -1,0 +1,26 @@
+{
+  "name": "reportes-servicio",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server/index.js",
+    "dev": "node --env-file-if-exists=.env --watch server/index.js",
+    "migrate": "node --env-file-if-exists=.env server/migrate.js",
+    "password": "node scripts/password.js",
+    "build": "node scripts/build.js",
+    "test": "node --env-file-if-exists=.env --test tests/*.test.js",
+    "seed:signers:demo": "node --env-file-if-exists=.env scripts/import-signers.js scripts/data/signers-demo.json"
+  },
+  "dependencies": {
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.7.0",
+    "helmet": "^8.3.0",
+    "node-pg-migrate": "^9.0.0",
+    "pg": "^8.23.0",
+    "zod": "^4.6.5"
+  }
+}
