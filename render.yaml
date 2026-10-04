@@ -1,0 +1,30 @@
+# Provisioning this Blueprint creates paid resources. Review the plan in Render.
+services:
+  - type: web
+    name: reportes-api
+    runtime: node
+    plan: 0.5c-512mb
+    buildCommand: npm ci && npm run build
+    preDeployCommand: npm run migrate
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: '24'
+      - key: DATABASE_URL
+        fromDatabase:
+          name: reportes-db
+          property: connectionString
+      - key: SIGNER_CODE_PEPPER
+        generateValue: true
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: SESSION_HOURS
+        value: 12
+databases:
+  - name: reportes-db
+    plan: 0.1c-256mb
+    postgresMajorVersion: '17'
+    ipAllowList: []
