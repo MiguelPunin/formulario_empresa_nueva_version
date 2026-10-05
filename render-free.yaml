@@ -1,0 +1,23 @@
+# Despliegue gratuito con PostgreSQL externo (Neon Free).
+# Configurar DATABASE_URL desde Neon; no usar la base local.
+services:
+  - type: web
+    name: reportes-servicio-free
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm run migrate && npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: '24'
+      - key: DATABASE_URL
+        sync: false
+      - key: SIGNER_CODE_PEPPER
+        generateValue: true
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: SESSION_HOURS
+        value: 12
