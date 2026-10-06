@@ -1189,3 +1189,21 @@
     }
 
 @media print { .empty-additional-signature { display: none !important; } }
+
+    .client-signature-dialog { max-width: 560px; }
+    .authorization-code select { width: 100%; min-height: 46px; padding: 10px 12px; font: inherit; font-size: 16px; color: var(--ink); background: #fff; border: 1px solid var(--border); border-radius: 10px; }
+    .authorization-code small { color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .client-institution { display: grid; gap: 3px; margin: 12px 0 18px; padding: 12px; border-radius: 10px; background: var(--panel); color: var(--ink); }
+    .client-institution span { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+    .client-empty { padding: 10px 12px; border: 1px dashed var(--border); border-radius: 9px; }
+    .client-selected-person { padding: 2px 0 0; color: var(--ink); }
+    .client-add-person { width: 100%; min-height: 42px; }
+    .client-person-name-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media screen and (max-width: 520px) {
+      .client-person-name-fields { grid-template-columns: 1fr; gap: 14px; }
+      .client-signature-dialog .signature-actions button { flex: 1 1 120px; min-height: 44px; }
+    }
+
+    .client-signature-dialog .authorization-code { margin-bottom: 12px; }
+
+    .history-delete { color: #a32323; border-color: #e5bcbc; }

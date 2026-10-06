@@ -80,7 +80,7 @@ Todos los endpoints de reportes requieren `Authorization: Bearer <token>`. Los c
 | `POST /api/reports/:id/duplicate` | `{requestId,date}` → nuevo borrador persistido |
 | `PATCH /api/reports/:id/confirm` | `{version,payload}` → confirmación inmutable |
 
-Fechas: `YYYY-MM-DD`. Estados: `draft`, `confirmed`. Errores: 400 datos inválidos, 401 acceso/sesión, 403 origen, 404 inexistente, 409 conflicto, 413 tamaño, 429 intentos, 503 servicio/base no disponible. No se devuelven stack traces ni credenciales. La API no expone PATCH/DELETE de confirmados.
+Fechas: `YYYY-MM-DD`. Estados: `draft`, `confirmed`. Errores: 400 datos inválidos, 401 acceso/sesión, 403 origen, 404 inexistente, 409 conflicto, 413 tamaño, 429 intentos, 503 servicio/base no disponible. No se devuelven stack traces ni credenciales. Los confirmados no se pueden editar; su propietario puede eliminarlos con DELETE /api/reports/:id.
 
 ## Variables de entorno
 
@@ -189,3 +189,17 @@ Los reportes anteriores sin autor verificable quedan con owner_id nulo y ocultos
 ## Firmantes autorizados e instituciones
 
 La guía completa de configuración, claves DEMO, endpoints, pruebas y actualización de datos está en [docs/FIRMAS_AUTORIZADAS.md](docs/FIRMAS_AUTORIZADAS.md). La nueva regla de duplicación sustituye la anterior: las copias requieren firmas nuevas.
+
+## Responsables por institución
+
+Consulta [el flujo de firmas e importación inicial](docs/responsables-firmas.md) para el catálogo del Excel, la migración y la opción `REQUIRE_SIGNATURE_CODE`.
+
+### Eliminar reportes guardados
+
+En **Historial de reportes**, el botón **Eliminar** pide confirmación antes de borrar el reporte y sus firmas. Solo su propietario puede hacerlo; las copias duplicadas se conservan. La migración `1791320200000_owner_delete_reports.cjs` habilita el borrado autorizado sin permitir editar confirmados. Ejecutar `npm run migrate` antes de reiniciar el backend.
+
+### Número de reporte por campos
+
+El prefijo se compone en minúsculas como `unidad.ciudad.institución.`. Usa las siglas del catálogo completo de instituciones y respeta las ediciones de la unidad técnica. La terminación numérica se escribe manualmente, conserva ceros iniciales y se mantiene al cambiar los campos. Los reportes guardados conservan su número; las copias sin número manual empiezan con el prefijo, sin reutilizar el consecutivo.
+
+Ciudades configuradas: Quito/UIO, Guayaquil/GYE, Cuenca/CUE, Manta/MEC, Loja/LOH y Francisco de Orellana/OCC (también Coca y El Coca). Referencia: [DGAC, acuerdo 018/2024](https://www.aviacioncivil.gob.ec/wp-content/uploads/downloads/2024/04/acuerdo_nro__018-20240723205001712757746.pdf). Para otras ciudades, el campo avisa que se escriba su sigla manualmente en el número; no se inventan abreviaturas. El número completo sigue siendo editable. No se guarda un prefijo incompleto ni se asigna automáticamente el sufijo desde esta interfaz.

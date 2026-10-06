@@ -1,4 +1,4 @@
-import { createHash, createHmac } from 'node:crypto';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { rateLimit } from 'express-rate-limit';
 import { z } from 'zod';
 import { verifyPassword, hashPassword } from './password.js';
@@ -23,6 +23,12 @@ function parse(schema, body) {
 const meta = row => ({ authorizationId: row.id, ...row.signer_snapshot, accepted: true,
   acceptedAt: row.accepted_at.toISOString(), signedAt: row.signed_at.toISOString() });
 
+const normalized = value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLocaleLowerCase();
+function customerMatchesInstitution(customer, institution) {
+  const input = normalized(customer);
+  return [institution.name, institution.code, `${institution.name} (${institution.code})`].some(value => normalized(value) === input);
+}
+
 export function registerSignerRoutes(app, pool, config) {
   const dummy = hashPassword('unavailable-signer-' + Date.now());
   app.get('/api/signers/settings', (req, res) => res.json({ requireSignatureCode: Boolean(config.requireSignatureCode) }));
@@ -31,6 +37,7 @@ export function registerSignerRoutes(app, pool, config) {
     const optionalText = z.string().trim().max(500).default('');
     const data = parse(z.object({ role: z.enum(['tecnico','cliente','adicional']), payload: payloadSchema,
       name: optionalText, identification: optionalText, title: optionalText }).strict(), req.body);
+    if (data.role === 'cliente') throw fail('Selecciona un responsable de la institución para firmar como cliente.', 400);
     if (!data.payload.documentId) throw fail('Inicia un nuevo reporte antes de firmar.', 400);
     const snapshot = { signerId: null, signerName: data.name, signerIdentification: data.identification,
       signerTitle: data.title, demo: false, acceptanceText };
@@ -41,7 +48,56 @@ export function registerSignerRoutes(app, pool, config) {
   });
   app.get('/api/institutions', async (req, res) => {
     const result = await pool.query('SELECT id,code,name FROM institutions WHERE active ORDER BY name');
+    res.json({ items: result.rows, requireSignatureCode: Boolean(config.requireSignatureCode) });
+  });
+  app.get('/api/institutions/:id/signers', async (req, res) => {
+    const id = parse(z.uuid(), req.params.id);
+    const result = await pool.query(`SELECT s.id,s.treatment,s.first_name AS "firstName",s.last_name AS "lastName",s.name
+      FROM authorized_signers s JOIN institutions i ON i.id=s.institution_id
+      WHERE i.id=$1 AND i.active AND s.active ORDER BY s.last_name,s.first_name,s.name`, [id]);
     res.json({ items: result.rows });
+  });
+  app.post('/api/institutions/:id/signers', rateLimit({ windowMs: 60 * 60 * 1000, limit: 30,
+    standardHeaders: 'draft-8', legacyHeaders: false,
+    message: { error: 'Se alcanzó el límite de responsables nuevos. Intenta más tarde.' },
+  }), async (req, res) => {
+    const institutionId = parse(z.uuid(), req.params.id);
+    const data = parse(z.object({ treatment: z.string().trim().max(40).default(''), firstName: z.string().trim().min(1).max(100),
+      lastName: z.string().trim().min(1).max(100), jobTitle: z.string().trim().max(200).default(''), city: z.string().trim().max(100).default('') }).strict(), req.body);
+    const institution = await pool.query('SELECT id FROM institutions WHERE id=$1 AND active', [institutionId]);
+    if (!institution.rowCount) throw fail('La institución seleccionada no está disponible.', 404);
+    const name = `${data.firstName} ${data.lastName}`;
+    const result = await pool.query(`INSERT INTO authorized_signers(external_key,institution_id,name,identification,title,treatment,first_name,last_name,job_title,city,code_hash,code_lookup)
+      VALUES($1,$2,$3,'PENDIENTE',$4,$4,$5,$6,$7,$8,NULL,NULL)
+      RETURNING id,treatment,first_name AS "firstName",last_name AS "lastName",name`,
+    [`manual-${randomUUID()}`, institutionId, name, data.treatment, data.firstName, data.lastName, data.jobTitle, data.city]);
+    res.status(201).json(result.rows[0]);
+  });
+  app.post('/api/signers/authorize-client', rateLimit({ windowMs: 15 * 60 * 1000, limit: 30,
+    standardHeaders: 'draft-8', legacyHeaders: false,
+    message: { error: 'Demasiadas solicitudes de firma. Espera antes de volver a intentar.' },
+  }), async (req, res) => {
+    if (config.requireSignatureCode) throw fail('La firma requiere el código personal. Usa el flujo de autorización con clave.');
+    const data = parse(z.object({ institutionId: z.uuid(), signerId: z.uuid(), identification: z.string().trim().max(100).default(''),
+      payload: payloadSchema }).strict(), req.body);
+    if (!data.payload.documentId) throw fail('Inicia un nuevo reporte antes de firmar.', 400);
+    const institutionResult = await pool.query('SELECT id,code,name FROM institutions WHERE id=$1 AND active', [data.institutionId]);
+    const institution = institutionResult.rows[0];
+    if (!institution || !customerMatchesInstitution(data.payload.form.cliente, institution)) {
+      throw fail('La institución no coincide con el cliente del reporte. Selecciona el cliente del catálogo.', 400);
+    }
+    const personResult = await pool.query(`SELECT id,name,identification,title,treatment,first_name,last_name,job_title,institution_id
+      FROM authorized_signers WHERE id=$1 AND institution_id=$2 AND active`, [data.signerId, institution.id]);
+    const signer = personResult.rows[0];
+    if (!signer) throw fail('El responsable ya no está disponible para esta institución. Actualiza la lista.', 409);
+    const treatment = signer.treatment || signer.title || '';
+    const snapshot = { signerId: signer.id, signerName: signer.name, signerIdentification: data.identification,
+      signerTitle: treatment, signerTreatment: treatment, signerInstitutionId: institution.id,
+      signerInstitutionName: institution.name, signerJobTitle: signer.job_title || '', demo: false, acceptanceText };
+    const grant = await pool.query(`INSERT INTO signature_authorizations(owner_id,signer_id,credential_version,document_id,role,content_hash,signer_snapshot)
+      VALUES($1,$2,'no-code-v1',$3,'cliente',$4,$5) RETURNING id`,
+    [req.userId, signer.id, data.payload.documentId, contentHash(data.payload), snapshot]);
+    res.json({ valid: true, authorizationId: grant.rows[0].id, signer: snapshot });
   });
   app.post('/api/signers/validate', rateLimit({ windowMs: 15 * 60 * 1000, limit: 20,
     standardHeaders: 'draft-8', legacyHeaders: false,
@@ -66,8 +122,8 @@ export function registerSignerRoutes(app, pool, config) {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      const result = await client.query(`SELECT a.*,s.active,s.code_hash FROM signature_authorizations a
-        LEFT JOIN authorized_signers s ON s.id=a.signer_id
+      const result = await client.query(`SELECT a.*,s.active,s.code_hash,s.institution_id AS signer_institution_id,i.active AS institution_active FROM signature_authorizations a
+        LEFT JOIN authorized_signers s ON s.id=a.signer_id LEFT JOIN institutions i ON i.id=s.institution_id
         WHERE a.id=$1 AND a.owner_id=$2 AND a.expires_at>now() AND a.report_id IS NULL FOR UPDATE OF a`, [id,req.userId]);
       const grant = result.rows[0];
       if (!validCredential(grant, config)) throw fail('La autorización venció o no está disponible. Vuelve a abrir la firma.');
@@ -101,6 +157,8 @@ export function registerSignerRoutes(app, pool, config) {
 function validCredential(row, config) {
   if (!row) return false;
   if (row.credential_version === 'manual-v1') return !config.requireSignatureCode && row.signer_id === null;
+  if (row.credential_version === 'no-code-v1') return !config.requireSignatureCode && row.active && row.institution_active
+    && row.role === 'cliente' && row.signer_snapshot.signerInstitutionId === row.signer_institution_id;
   return row.active && row.code_hash && row.credential_version === digest(row.code_hash);
 }
 
@@ -109,8 +167,8 @@ export async function verifyReportSignatures(client, ownerId, payload, reportId,
     const image = payload.signatures[role], supplied = payload.signatureMeta?.[role];
     if (!image) { if (supplied) throw fail('La identidad requiere una firma.', 400); continue; }
     if (!supplied || !payload.documentId) throw fail('Cada firma requiere autorización y aceptación. Vuelve a firmar.', 400);
-    const result = await client.query(`SELECT a.*,s.active,s.code_hash FROM signature_authorizations a
-      LEFT JOIN authorized_signers s ON s.id=a.signer_id WHERE a.id=$1 AND a.owner_id=$2 FOR UPDATE OF a`, [supplied.authorizationId, ownerId]);
+    const result = await client.query(`SELECT a.*,s.active,s.code_hash,s.institution_id AS signer_institution_id,i.active AS institution_active FROM signature_authorizations a
+      LEFT JOIN authorized_signers s ON s.id=a.signer_id LEFT JOIN institutions i ON i.id=s.institution_id WHERE a.id=$1 AND a.owner_id=$2 FOR UPDATE OF a`, [supplied.authorizationId, ownerId]);
     const row = result.rows[0];
     if (!row || !row.signed_at || !row.accepted_at || row.document_id !== payload.documentId || row.role !== role
       || row.content_hash !== contentHash(payload) || row.signature_hash !== digest(image)

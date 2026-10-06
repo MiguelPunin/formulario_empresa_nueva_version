@@ -10,6 +10,7 @@ export const signature = z.string().max(500000).refine(value => value === '' || 
 const signerMetadata = z.object({
   authorizationId: z.uuid(), signerId: z.uuid().nullable(), signerName: text,
   signerIdentification: text, signerTitle: text, demo: z.boolean(),
+  signerTreatment: text.optional(), signerInstitutionId: z.uuid().optional(), signerInstitutionName: text.optional(), signerJobTitle: text.optional(),
   acceptanceText: z.string().max(1000), accepted: z.literal(true),
   acceptedAt: z.iso.datetime(), signedAt: z.iso.datetime(),
 }).strict();

@@ -26,7 +26,7 @@ export function createApp(pool, config) {
   app.use('/api', cors({ origin(origin, callback) {
     if (!origin || config.origins.includes(origin)) callback(null, true);
     else callback(fail(403, 'Origen no autorizado.'));
-  }, methods: ['GET', 'POST', 'PATCH'], allowedHeaders: ['Authorization', 'Content-Type'] }));
+  }, methods: ['GET', 'POST', 'PATCH', 'DELETE'], allowedHeaders: ['Authorization', 'Content-Type'] }));
   app.use('/api', (req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
   app.use(express.json({ limit: '2mb' }));
   app.get('/api/health', async (req, res) => { await pool.query('SELECT 1'); res.json({ ok: true }); });
@@ -74,6 +74,18 @@ export function createApp(pool, config) {
     const count = await pool.query(`SELECT count(*)::int AS total FROM reports ${where}`, values);
     const rows = await pool.query(`SELECT ${summaryColumns} FROM reports ${where} ORDER BY created_at DESC,id DESC LIMIT 20 OFFSET $6`, [...values, (f.page - 1) * 20]);
     res.json({ items: rows.rows, total: count.rows[0].total, page: f.page, pageSize: 20 });
+  });
+  app.delete('/api/reports/:id', async (req, res) => {
+    const id = parse(z.uuid(), req.params.id);
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query("SELECT set_config('app.delete_report_owner', $1, true)", [req.userId]);
+      const removed = await client.query('DELETE FROM reports WHERE id=$1 AND owner_id=$2 RETURNING id', [id, req.userId]);
+      if (!removed.rowCount) throw fail(404, 'El reporte no existe o ya fue eliminado.');
+      await client.query('COMMIT'); res.sendStatus(204);
+    } catch (error) { await client.query('ROLLBACK'); throw error; }
+    finally { client.release(); }
   });
   app.get('/api/reports/:id', async (req, res) => {
     const id = parse(z.uuid(), req.params.id);

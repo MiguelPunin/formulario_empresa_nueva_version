@@ -329,6 +329,131 @@
     </dialog>`;
   }
 
+  function ClientSignatureAuthorization({ institution, label, payload, onSave, onClose }) {
+    const dialogRef = useRef(null);
+    const active = useRef(true);
+    const busyRef = useRef(false);
+    const [phase, setPhase] = useState('select');
+    const [people, setPeople] = useState([]);
+    const [personId, setPersonId] = useState('');
+    const [identification, setIdentification] = useState('');
+    const [newPerson, setNewPerson] = useState({ treatment: '', otherTreatment: '', firstName: '', lastName: '', identification: '' });
+    const [grant, setGrant] = useState(null);
+    const [accepted, setAccepted] = useState(false);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState('');
+    useEffect(() => {
+      const focused = document.activeElement;
+      const dialog = dialogRef.current;
+      if (dialog && !dialog.open) dialog.showModal();
+      const controller = new AbortController();
+      ReportAPI.request('/institutions/' + institution.id + '/signers', { signal: controller.signal })
+        .then(result => { if (active.current) setPeople(result.items); })
+        .catch(err => { if (active.current) setError(err.message); })
+        .finally(() => { if (active.current) setLoading(false); });
+      return () => { active.current = false; controller.abort(); if (focused?.isConnected) focused.focus(); };
+    }, [institution.id]);
+    async function addPerson(event) {
+      event.preventDefault();
+      if (busyRef.current) return;
+      busyRef.current = true; setLoading(true); setError('');
+      const treatment = newPerson.treatment === 'Otro' ? newPerson.otherTreatment.trim() : newPerson.treatment;
+      try {
+        const person = await ReportAPI.request('/institutions/' + institution.id + '/signers', { method: 'POST',
+          body: { treatment, firstName: newPerson.firstName, lastName: newPerson.lastName } });
+        if (active.current) {
+          setPeople(previous => [...previous, person].sort((a,b) => a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName)));
+          setPersonId(person.id); setIdentification(newPerson.identification.trim()); setPhase('select');
+          setNewPerson({ treatment: '', otherTreatment: '', firstName: '', lastName: '', identification: '' });
+        }
+      } catch (err) { if (active.current) setError(err.message); }
+      finally { busyRef.current = false; if (active.current) setLoading(false); }
+    }
+    async function advance(event) {
+      event.preventDefault();
+      if (busyRef.current || (phase === 'select' && !personId) || (phase === 'accept' && !accepted)) return;
+      busyRef.current = true; setLoading(true); setError('');
+      try {
+        if (phase === 'select') {
+          const result = await ReportAPI.request('/signers/authorize-client', { method: 'POST', body: {
+            institutionId: institution.id, signerId: personId, identification: identification.trim(), payload,
+          } });
+          if (active.current) { setGrant(result); setPhase('accept'); }
+        } else {
+          await ReportAPI.request('/signers/authorizations/' + grant.authorizationId + '/accept', { method: 'POST', body: { accepted: true } });
+          if (active.current) setPhase('pad');
+        }
+      } catch (err) { if (active.current) setError(err.message); }
+      finally { busyRef.current = false; if (active.current) setLoading(false); }
+    }
+    if (phase === 'pad') return html`<${SignaturePad} label=${label} initialValue="" onClose=${onClose}
+      onSave=${async image => {
+        const result = await ReportAPI.request('/signers/authorizations/' + grant.authorizationId + '/sign', {
+          method: 'POST', body: { signature: image, payload } });
+        if (active.current) onSave(result.signature, result.metadata);
+      }} />`;
+    const chosen = people.find(person => person.id === personId);
+    const displayName = person => [person.treatment, person.firstName, person.lastName].filter(Boolean).join(' ');
+    const personOptions = people.map(person => html`<option key=${person.id} value=${person.id}>${displayName(person)}</option>`);
+    const listStatus = loading ? html`<p role="status">Cargando responsables…</p>`
+      : people.length ? '' : html`<p className="client-empty">No existen responsables registrados para esta institución.</p>`;
+    function choosePerson(event) { setPersonId(event.target.value); setIdentification(''); }
+    return html`<dialog ref=${dialogRef} className="signature-dialog authorization-dialog client-signature-dialog" aria-labelledby="client-signature-title"
+      onCancel=${event => { event.preventDefault(); onClose(); }}>
+      <form onSubmit=${phase === 'add' ? addPerson : advance}>
+        <h2 id="client-signature-title">${phase === 'add' ? 'Agregar responsable' : phase === 'accept' ? 'Confirmar firma' : 'Firmar reporte'}</h2>
+        <div className="client-institution"><span>Institución</span><strong>${institution.name} (${institution.code})</strong></div>
+        ${phase === 'select' && html`
+          ${listStatus}
+          <p>Al continuar, confirma que la persona indicada está de acuerdo con firmar este reporte.</p>
+          <label className="authorization-code">Responsable que firma
+            <select value=${personId} onChange=${choosePerson} disabled=${loading} required>
+              <option value="">Selecciona un responsable</option>
+              ${personOptions}
+            </select>
+          </label>
+          ${chosen ? html`<div className="client-selected-person"><strong>${displayName(chosen)}</strong></div>` : ''}
+          <label className="authorization-code">Número de cédula
+            <input type="text" autoComplete="off" maxLength="100" placeholder="Cédula o documento (opcional)"
+              value=${identification} onInput=${event => setIdentification(event.target.value)} disabled=${loading} />
+            <small>Escribe la cédula o documento de la persona que firma. Es opcional.</small>
+          </label>
+          <button type="button" className="secondary client-add-person" disabled=${loading} onClick=${() => setPhase('add')}>+ Agregar responsable nuevo</button>
+        `}
+        ${phase === 'add' && html`
+          <label className="authorization-code">Tratamiento
+            <select value=${newPerson.treatment} onChange=${event => setNewPerson(previous => ({ ...previous, treatment: event.target.value }))} disabled=${loading}>
+              <option value="">Sin tratamiento</option><option>Ing.</option><option>Dr.</option><option>Dra.</option><option>Lcdo.</option><option>Lcda.</option><option>Econ.</option><option>CPA.</option><option>Otro</option>
+            </select>
+          </label>
+          ${newPerson.treatment === 'Otro' && html`<label className="authorization-code">Especifica el tratamiento
+            <input value=${newPerson.otherTreatment} maxLength="40" onInput=${event => setNewPerson(previous => ({ ...previous, otherTreatment: event.target.value }))} disabled=${loading} />
+          </label>`}
+          <div className="client-person-name-fields">
+            <label className="authorization-code">Nombre<input required maxLength="100" value=${newPerson.firstName} onInput=${event => setNewPerson(previous => ({ ...previous, firstName: event.target.value }))} disabled=${loading} /></label>
+            <label className="authorization-code">Apellido<input required maxLength="100" value=${newPerson.lastName} onInput=${event => setNewPerson(previous => ({ ...previous, lastName: event.target.value }))} disabled=${loading} /></label>
+          </div>
+          <label className="authorization-code">Número de cédula
+            <input autoComplete="off" maxLength="100" value=${newPerson.identification} onInput=${event => setNewPerson(previous => ({ ...previous, identification: event.target.value }))} disabled=${loading} />
+            <small>Se incluirá en la firma de este reporte.</small>
+          </label>
+        `}
+        ${phase === 'accept' && html`
+          <div className="signer-identity"><strong>${[grant.signer.signerTreatment, grant.signer.signerName].filter(Boolean).join(' ')}</strong>
+            ${grant.signer.signerIdentification && html`<span>C.I.: ${grant.signer.signerIdentification}</span>`}<small>${grant.signer.signerInstitutionName}</small></div>
+          <p>${grant.signer.acceptanceText}</p>
+          <label className="authorization-check"><input type="checkbox" checked=${accepted} disabled=${loading} onChange=${event => setAccepted(event.target.checked)} />
+            <span>He leído y acepto el contenido del presente reporte.</span></label>
+        `}
+        ${error && html`<p role="alert" className="report-error">${error}</p>`}
+        <div className="signature-actions">
+          ${phase === 'add' ? html`<button type="button" className="secondary" disabled=${loading} onClick=${() => setPhase('select')}>Volver</button>` : html`<button type="button" className="secondary" onClick=${onClose}>Cancelar</button>`}
+          ${phase === 'add' ? html`<button type="submit" disabled=${loading || !newPerson.firstName.trim() || !newPerson.lastName.trim() || (newPerson.treatment === 'Otro' && !newPerson.otherTreatment.trim())}>${loading ? 'Guardando…' : 'Guardar y usar'}</button>` : html`<button type="submit" disabled=${loading || (phase === 'select' && !personId) || (phase === 'accept' && !accepted)}>${loading ? 'Procesando…' : phase === 'accept' ? 'Aceptar y continuar' : 'Continuar'}</button>`}
+        </div>
+      </form>
+    </dialog>`;
+  }
+
   function SignaturePad({ label, initialValue, onSave, onClose }) {
     const dialogRef = useRef(null);
     const canvasRef = useRef(null);
@@ -460,6 +585,21 @@
     `;
   }
 
+  const REPORT_CITIES = [
+    ['Quito', 'uio'], ['Guayaquil', 'gye'], ['Cuenca', 'cue'],
+    ['Manta', 'mec'], ['Loja', 'loh'], ['Francisco de Orellana', 'occ'],
+  ];
+  const normalizeReportPart = value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+  function reportPrefix(form, institutions) {
+    const cityName = normalizeReportPart(form.ciudad);
+    const city = REPORT_CITIES.find(([name, code]) => normalizeReportPart(name) === cityName || code === cityName);
+    const cityCode = city?.[1] || (cityName === 'el coca' || cityName === 'coca' ? 'occ' : '');
+    const customer = normalizeReportPart(form.cliente);
+    const institution = institutions.find(item => [item.name, item.code, `${item.name} (${item.code})`].some(value => normalizeReportPart(value) === customer));
+    const unit = normalizeReportPart(form.unidadSoporte).replace(/[^a-z0-9]/g, '');
+    return [unit, cityCode, normalizeReportPart(institution?.code)].join('.') + '.';
+  }
+
   function App() {
     const [brandId, setBrandId] = useState(null);
     const [choosingBrand, setChoosingBrand] = useState(true);
@@ -470,6 +610,7 @@
     const [loginPass, setLoginPass] = useState('');
     const [loginError, setLoginError] = useState('');
     const [reportNumber, setReportNumber] = useState('');
+    const numberingFields = useRef('');
     const [form, setForm] = useState(createInitialForm);
     const [equipoRows, setEquipoRows] = useState(createInitialEquipoRows);
     const [repuestoRows, setRepuestoRows] = useState(createInitialRepuestoRows);
@@ -482,6 +623,7 @@
     const [signatureMeta, setSignatureMeta] = useState({ tecnico: null, cliente: null, adicional: null });
     const signedContent = useRef(null);
     const [institutions, setInstitutions] = useState([]);
+    const [requireSignatureCode, setRequireSignatureCode] = useState(null);
     const [institutionsError, setInstitutionsError] = useState('');
     const [record, setRecord] = useState(null);
     const [readOnly, setReadOnly] = useState(false);
@@ -495,6 +637,22 @@
     const loggedInBefore = useRef(false);
     const lastUsername = useRef(null);
     const duplicateRequest = useRef(null);
+    useEffect(() => {
+      const key = JSON.stringify([form.unidadSoporte, form.ciudad, form.cliente, institutions.map(i => i.code)]);
+      if (numberingFields.current === key) return;
+      const previousFields = numberingFields.current ? JSON.parse(numberingFields.current) : [];
+      numberingFields.current = key;
+      if (readOnly || busy || pendingSave) return;
+      const prefix = reportPrefix(form, institutions);
+      setReportNumber(previous => {
+        const tail = previous.split('.').at(-1);
+        const suffix = /^\d+$/.test(tail) ? tail : '';
+        const parts = prefix.split('.');
+        if (!parts[1] && previousFields[1] === form.ciudad) parts[1] = previous.split('.')[1] || '';
+        const nextPrefix = parts.join('.');
+        return nextPrefix === '...' && !suffix ? '' : nextPrefix + suffix;
+      });
+    }, [form.unidadSoporte, form.ciudad, form.cliente, institutions, readOnly, busy, pendingSave]);
     const snapshot = () => ({ schemaVersion: 1, reportNumber, brandId: brand.id, form, equipoRows, repuestoRows, repuestosEnabled, documentId, signatures, signatureMeta });
     const contentKey = JSON.stringify({ reportNumber, brandId: brand.id, form, equipoRows, repuestoRows, repuestosEnabled, documentId });
     useEffect(() => {
@@ -509,11 +667,13 @@
       const controller = new AbortController();
       setInstitutionsError('');
       ReportAPI.request('/institutions', { signal: controller.signal }).then(data => {
-        if (!controller.signal.aborted) setInstitutions(data.items);
+        if (!controller.signal.aborted) { setInstitutions(data.items); setRequireSignatureCode(Boolean(data.requireSignatureCode)); }
       }).catch(err => { if (!controller.signal.aborted) setInstitutionsError('No se pudo cargar el catálogo. Puedes escribir el cliente manualmente.'); });
       return () => controller.abort();
     }, [currentUser]);
-    const hasUnsaved = !readOnly && (reportNumber || pendingSave || Object.entries(form).some(([key, value]) => key !== 'fecha' && !(key === 'unidadSoporte' && value === currentUser?.siglas) && (Array.isArray(value) ? value.length : value)) ||
+    const normalizeInstitution = value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLocaleLowerCase();
+    const selectedInstitution = institutions.find(item => [item.name, item.code, item.name + ' (' + item.code + ')'].some(value => normalizeInstitution(value) === normalizeInstitution(form.cliente)));
+    const hasUnsaved = !readOnly && ((reportNumber && reportNumber !== reportPrefix(form, institutions)) || pendingSave || Object.entries(form).some(([key, value]) => key !== 'fecha' && !(key === 'unidadSoporte' && value === currentUser?.siglas) && (Array.isArray(value) ? value.length : value)) ||
       equipoRows.some(row => Object.values(row).some(Boolean)) || repuestoRows.some(row => Object.values(row).some(Boolean)) || Object.values(signatures).some(Boolean));
 
     useEffect(() => {
@@ -553,7 +713,8 @@
     }
     function applyRecord(saved, editable = false) {
       const data = saved.payload;
-      setRecord(saved); setReportNumber(saved.number); setBrandId(data.brandId); setChoosingBrand(false);
+      numberingFields.current = JSON.stringify([data.form.unidadSoporte, data.form.ciudad, data.form.cliente, institutions.map(i => i.code)]);
+      setRecord(saved); setReportNumber(editable && !data.reportNumber ? reportPrefix(data.form, institutions) : saved.number); setBrandId(data.brandId); setChoosingBrand(false);
       setForm(data.form); setEquipoRows(data.equipoRows); setRepuestoRows(data.repuestoRows);
       const nextDocumentId = data.documentId || crypto.randomUUID();
       setDocumentId(nextDocumentId);
@@ -577,6 +738,7 @@
       try {
         if (record?.status === 'confirmed') { if (andPrint) await printReady(); return; }
         if (readOnly) throw new Error('Abre el borrador con “Continuar borrador” antes de confirmarlo.');
+        if (reportNumber.endsWith('.') || reportNumber.includes('..')) throw new Error('Completa las siglas y el número manual del reporte antes de guardar.');
         if (!form.cliente.trim()) throw new Error('Ingresa el hospital o cliente antes de guardar.');
         if (!form.fecha) throw new Error('Ingresa la fecha del reporte.');
         const operation = pendingSave || { requestId: crypto.randomUUID(), payload: snapshot() };
@@ -651,6 +813,7 @@
     }
 
     function clearForm(user = currentUser) {
+      numberingFields.current = '';
       setDocumentId(crypto.randomUUID()); signedContent.current = null;
       setSignatureMeta({ tecnico: null, cliente: null, adicional: null });
       setRecord(null); setReadOnly(false); setPendingSave(null); setError(''); setMessage('');
@@ -785,10 +948,10 @@
                 id="numeroReporte"
                 type="text"
                 value=${reportNumber}
-                onChange=${event => setReportNumber(event.target.value)}
+                onInput=${event => setReportNumber(event.target.value)}
                 maxLength="60"
                 readOnly=${readOnly || busy}
-                placeholder="Automático al guardar"
+                placeholder="unidad.ciudad.cliente.número"
               />
             </div>
           </div>
@@ -803,7 +966,7 @@
             <div className="spacer"></div>
             <div className="buttons">
               <button className="secondary" disabled=${busy || !!pendingSave || readOnly} type="button" onClick=${() => setChoosingBrand(true)}>Cambiar logo</button>
-              <button className="secondary" disabled=${busy} type="button" onClick=${() => setHistoryOpen(true)}>Historial de facturas</button>
+              <button className="secondary" disabled=${busy} type="button" onClick=${() => setHistoryOpen(true)}>Historial de reportes</button>
               <button className="secondary" disabled=${busy} id="logoutBtn" type="button" onClick=${handleLogout}>Salir</button>
               ${!readOnly && html`<button disabled=${busy} type="button" onClick=${() => saveReport(false)}>${busy ? 'Guardando…' : pendingSave ? 'Reintentar guardado' : 'Guardar reporte'}</button>`}
               <button id="pdfBtn" type="button" disabled=${pdfGenerating || busy || (readOnly && record?.status !== 'confirmed')} onClick=${() => saveReport(true)}>
@@ -841,7 +1004,9 @@
             <div className="grid cols-3 compact-grid">
               <div className="field compact">
                 <label>Ciudad</label>
-                <input type="text" value=${form.ciudad} onInput=${updateField('ciudad')} />
+                <input type="text" id="ciudad" list="report-cities" value=${form.ciudad} onInput=${updateField('ciudad')} />
+                <datalist id="report-cities">${REPORT_CITIES.map(([name, code]) => html`<option key=${code} value=${name}>${code.toUpperCase()}</option>`)}</datalist>
+                ${form.ciudad && !reportPrefix(form, institutions).split('.')[1] && html`<small>Escribe la sigla de esta ciudad en el número de reporte.</small>`}
               </div>
               <div className="field compact">
                 <label>Área solicitante</label>
@@ -1187,7 +1352,15 @@
               ${[['tecnico', 'Servicio técnico'], ['cliente', 'Cliente'], ['adicional', 'Firma adicional (opcional)']].map(([key, label]) => html`
                 <div key=${key} className=${'signature-slot' + (key === 'adicional' && !signatures[key] ? ' empty-additional-signature' : '')}>
                   <div className="signature-controls">
-                    <button type="button" className="secondary" onClick=${() => setSignatureTarget(key)}>
+                    <button type="button" className="secondary" onClick=${() => {
+                      if (key === 'cliente' && requireSignatureCode === null) {
+                        setError('Espera a que cargue el catálogo de instituciones. Si falló, vuelve a iniciar sesión.'); return;
+                      }
+                      if (key === 'cliente' && !requireSignatureCode && !selectedInstitution) {
+                        setError('Selecciona una institución del catálogo antes de firmar como cliente.'); return;
+                      }
+                      setError(''); setSignatureTarget(key);
+                    }}>
                       ${signatures[key] ? 'Editar firma' : 'Firmar / cargar imagen'} — ${label}
                     </button>
                     ${signatures[key] && html`<button type="button" className="secondary"
@@ -1207,11 +1380,20 @@
             </div>
           </fieldset>
         </div>
-        ${currentUser && historyOpen && html`<${ReportHistory} busy=${busy} onClose=${() => setHistoryOpen(false)} onOpen=${openReport} onDuplicate=${duplicateReport} />`}
+        ${currentUser && historyOpen && html`<${ReportHistory} busy=${busy} onClose=${() => setHistoryOpen(false)} onOpen=${openReport} onDuplicate=${duplicateReport} onDeleted=${id => { if (record?.id === id) clearForm(); }} />`}
         ${currentUser && choosingBrand && html`<${BrandPicker} selected=${brandId}
           onClose=${() => setChoosingBrand(false)}
           onSelect=${id => { setBrandId(id); setChoosingBrand(false); }} />`}
-        ${currentUser && signatureTarget && html`<${SignatureAuthorization}
+        ${currentUser && signatureTarget && signatureTarget === 'cliente' && !requireSignatureCode && html`<${ClientSignatureAuthorization}
+          institution=${selectedInstitution} label="cliente" payload=${snapshot()}
+          onClose=${() => setSignatureTarget(null)}
+          onSave=${(image, metadata) => {
+            signedContent.current = contentKey;
+            setSignatureMeta(prev => ({ ...prev, cliente: metadata }));
+            setSignatures(prev => ({ ...prev, cliente: image }));
+            setSignatureTarget(null);
+          }} />`}
+        ${currentUser && signatureTarget && (signatureTarget !== 'cliente' || requireSignatureCode) && html`<${SignatureAuthorization}
           label=${signatureTarget === 'tecnico' ? 'servicio técnico' : signatureTarget === 'cliente' ? 'cliente' : 'firma adicional'}
           role=${signatureTarget} payload=${snapshot()}
           onClose=${() => setSignatureTarget(null)}

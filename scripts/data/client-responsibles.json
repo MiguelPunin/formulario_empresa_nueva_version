@@ -1,0 +1,331 @@
+[
+  {
+    "code": "HDEC",
+    "name": "Hospital de especialidades de la ciudad",
+    "responsibles": [
+      {
+        "treatment": "Lcda.",
+        "firstName": "Sandra",
+        "lastName": "Albuja",
+        "jobTitle": "Jefatura de enfermería",
+        "city": "Guayaquil"
+      },
+      {
+        "treatment": "Lcdo.",
+        "firstName": "Deivis",
+        "lastName": "Moyano",
+        "jobTitle": "Coordinador de Jefatura de enfermería",
+        "city": "Guayaquil"
+      },
+      {
+        "treatment": "Lcda.",
+        "firstName": "Veronica",
+        "lastName": "Roman",
+        "jobTitle": "Coordinadora de UCI",
+        "city": "Guayaquil"
+      },
+      {
+        "treatment": "Lcda.",
+        "firstName": "Shearly",
+        "lastName": "Chiquito",
+        "jobTitle": "Coordinadora de Emergencias",
+        "city": "Guayaquil"
+      },
+      {
+        "treatment": "Lcda.",
+        "firstName": "Silvia",
+        "lastName": "Gonzalez",
+        "jobTitle": "Coordinadora de quirófano",
+        "city": "Guayaquil"
+      },
+      {
+        "treatment": "Lcda.",
+        "firstName": "Jazmin",
+        "lastName": "Mullo",
+        "jobTitle": "Coordinadora de Hemodinamia",
+        "city": "Guayaquil"
+      },
+      {
+        "treatment": "Lcdo.",
+        "firstName": "Samuel",
+        "lastName": "Narea",
+        "jobTitle": "Coordinador de centro de imágenes",
+        "city": "Guayaquil"
+      }
+    ]
+  },
+  {
+    "code": "KPOLI",
+    "name": "Hospital Kennedy Policentro",
+    "responsibles": [
+      {
+        "treatment": "Lcda.",
+        "firstName": "Rossana",
+        "lastName": "Valverde",
+        "jobTitle": "Jefatura de enfermería",
+        "city": "Guayaquil"
+      }
+    ]
+  },
+  {
+    "code": "OMNI",
+    "name": "Omnihospital",
+    "responsibles": [
+      {
+        "treatment": "Lcda.",
+        "firstName": "Fernanda",
+        "lastName": "Secaira",
+        "jobTitle": "Coordinadora de quirófano",
+        "city": "Guayaquil"
+      },
+      {
+        "treatment": "Lcda.",
+        "firstName": "Karen",
+        "lastName": "Loor",
+        "jobTitle": "Auxiliar coordinadora de quirófano",
+        "city": "Guayaquil"
+      },
+      {
+        "treatment": "Ing.",
+        "firstName": "Freddy",
+        "lastName": "Minga",
+        "jobTitle": "Dpto. Biomédico",
+        "city": "Guayaquil"
+      },
+      {
+        "treatment": "Ing.",
+        "firstName": "Jairo",
+        "lastName": "Cuquilema",
+        "jobTitle": "Dpto. Biomédico",
+        "city": "Guayaquil"
+      }
+    ]
+  },
+  {
+    "code": "UEES",
+    "name": "UEESClinic",
+    "responsibles": [
+      {
+        "treatment": "Lcda.",
+        "firstName": "Ginger",
+        "lastName": "Morales",
+        "jobTitle": "Jefatura de enfermería",
+        "city": "Guayaquil"
+      },
+      {
+        "treatment": "Lcda.",
+        "firstName": "Alejandra",
+        "lastName": "Valverde",
+        "jobTitle": "Coordinadora de UCI",
+        "city": "Guayaquil"
+      },
+      {
+        "treatment": "Lcda.",
+        "firstName": "Alejandra",
+        "lastName": "Fernandez",
+        "jobTitle": "Coordinadora de Emergencias",
+        "city": "Guayaquil"
+      },
+      {
+        "treatment": "Lcda.",
+        "firstName": "Margarita",
+        "lastName": "Muñoz",
+        "jobTitle": "Coordinadora de quirófano",
+        "city": "Guayaquil"
+      },
+      {
+        "treatment": "Lcdo.",
+        "firstName": "Patricio",
+        "lastName": "Alava",
+        "jobTitle": "Auxiliar coordinador de quirófano",
+        "city": "Guayaquil"
+      },
+      {
+        "treatment": "Ing.",
+        "firstName": "Mabel",
+        "lastName": "Oyarvide",
+        "jobTitle": "Coordinadora de Mantenimiento",
+        "city": "Guayaquil"
+      }
+    ]
+  },
+  {
+    "code": "CU",
+    "name": "Clinica Union",
+    "responsibles": [
+      {
+        "treatment": "Lcdo.",
+        "firstName": "Julian",
+        "lastName": "Palomino",
+        "jobTitle": "Coordinador de quirófano",
+        "city": "Guayaquil"
+      },
+      {
+        "treatment": "Lcdo.",
+        "firstName": "Jair",
+        "lastName": "Campoverde",
+        "jobTitle": "Coordinador de UCI",
+        "city": "Guayaquil"
+      }
+    ]
+  },
+  {
+    "code": "CSJ",
+    "name": "Clinica Saint Joseph",
+    "responsibles": [
+      {
+        "treatment": "Econ.",
+        "firstName": "Andres",
+        "lastName": "Hurtado",
+        "jobTitle": "Economista en jefe",
+        "city": "Guayaquil"
+      },
+      {
+        "treatment": "Lcda.",
+        "firstName": "Margarita",
+        "lastName": "Zambrano",
+        "jobTitle": "Coordinadora de quirófano",
+        "city": "Guayaquil"
+      }
+    ]
+  },
+  {
+    "code": "CA",
+    "name": "Clinica Angeles",
+    "responsibles": [
+      {
+        "treatment": "Lcda.",
+        "firstName": "Karla",
+        "lastName": "Briones",
+        "jobTitle": "Coordinadora de quirófano",
+        "city": "Guayaquil"
+      }
+    ]
+  },
+  {
+    "code": "HA",
+    "name": "Hospital Alcivar",
+    "responsibles": [
+      {
+        "treatment": "Ing.",
+        "firstName": "Jenny",
+        "lastName": "Polanco",
+        "jobTitle": "Coordinadora de compras",
+        "city": "Guayaquil"
+      },
+      {
+        "treatment": "Ing.",
+        "firstName": "Mayra",
+        "lastName": "Castillo",
+        "jobTitle": "Jefa de Mantenimiento",
+        "city": "Guayaquil"
+      }
+    ]
+  },
+  {
+    "code": "INC",
+    "name": "Incarvasc - Semedic",
+    "responsibles": [
+      {
+        "treatment": "Dra.",
+        "firstName": "Cristina",
+        "lastName": "Macías",
+        "jobTitle": "Doctora anestesiología",
+        "city": "Guayaquil"
+      }
+    ]
+  },
+  {
+    "code": "HSF",
+    "name": "Hospital San Francisco",
+    "responsibles": [
+      {
+        "treatment": "CPA.",
+        "firstName": "Lucia",
+        "lastName": "Carrillo",
+        "jobTitle": "Administradora de quirófano",
+        "city": "Guayaquil"
+      },
+      {
+        "treatment": "Lcda.",
+        "firstName": "Fernanda",
+        "lastName": "Cevallos",
+        "jobTitle": "Coordinadora de quirófano",
+        "city": "Guayaquil"
+      }
+    ]
+  },
+  {
+    "code": "HMS",
+    "name": "Hospital Monte Sinaí",
+    "responsibles": [
+      {
+        "treatment": "Ing.",
+        "firstName": "Jose",
+        "lastName": "Carguachi",
+        "jobTitle": "Analista de mantenimiento",
+        "city": "Guayaquil"
+      },
+      {
+        "treatment": "Ing.",
+        "firstName": "Edison",
+        "lastName": "Alvarado",
+        "jobTitle": "Jefe de mantenimiento",
+        "city": "Guayaquil"
+      }
+    ]
+  },
+  {
+    "code": "HRG",
+    "name": "Hospital Roberto Gilbert",
+    "responsibles": [
+      {
+        "treatment": "Ing.",
+        "firstName": "Stephen",
+        "lastName": "Morales",
+        "jobTitle": "Jefe de mantenimiento",
+        "city": "Guayaquil"
+      },
+      {
+        "treatment": "Ing.",
+        "firstName": "Pablo",
+        "lastName": "Banderas",
+        "jobTitle": "Analista de mantenimiento",
+        "city": "Guayaquil"
+      }
+    ]
+  },
+  {
+    "code": "HAP",
+    "name": "Hospital Alfredo Paulson",
+    "responsibles": [
+      {
+        "treatment": "Ing.",
+        "firstName": "Wilson",
+        "lastName": "Cueva",
+        "jobTitle": "Jefe de mantenimiento",
+        "city": "Guayaquil"
+      },
+      {
+        "treatment": "Ing.",
+        "firstName": "Moises",
+        "lastName": "Romero",
+        "jobTitle": "Analista de mantenimiento",
+        "city": "Guayaquil"
+      }
+    ]
+  },
+  {
+    "code": "HLV",
+    "name": "Hospital Luis Vernaza",
+    "responsibles": [
+      {
+        "treatment": "Ing.",
+        "firstName": "Carlos",
+        "lastName": "Solís",
+        "jobTitle": "Analista de mantenimiento",
+        "city": "Guayaquil"
+      }
+    ]
+  }
+]

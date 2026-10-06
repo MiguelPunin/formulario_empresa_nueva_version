@@ -184,7 +184,7 @@ async function authorize(content, token, role = 'cliente') {
 test('catalog is persistent and contains initial institutions', async () => {
   const token = await freshToken();
   const result = await request('/institutions', 'GET', null, token);
-  assert.deepEqual(result.data.items.map(i => i.code).sort(), ['CM','HDLV','HV','HVQ']);
+  assert.deepEqual(result.data.items.map(i => i.code).sort(), ['CA','CM','CSJ','CU','HA','HAP','HDEC','HDLV','HLV','HMS','HRG','HSF','HV','HVQ','INC','KPOLI','OMNI','UEES']);
 });
 
 test('signer validation, inactivity, mandatory acceptance, foreign owner and expired grants', async () => {
@@ -288,11 +288,11 @@ test('custom report numbers persist, reject collisions and can change on a dupli
   assert.equal(confirmed.data.number, 'MANUAL-0043');
 });
 
-test('manual optional identities and all three signatures persist without codes', async () => {
+test('manual optional technical and additional signatures persist without codes', async () => {
   const token = await freshToken(), content = signable();
   assert.equal((await request('/signers/settings', 'GET', null, token)).data.requireSignatureCode, false);
-  for (const role of ['tecnico', 'cliente', 'adicional']) {
-    const identity = role === 'cliente' ? { name: 'Persona manual', identification: '1234567890', title: 'Ing.' } : {};
+  for (const role of ['tecnico', 'adicional']) {
+    const identity = role === 'tecnico' ? { name: 'Persona manual', identification: '1234567890', title: 'Ing.' } : {};
     const grant = await request('/signers/manual', 'POST', { role, payload: content, ...identity }, token);
     assert.equal(grant.status, 200, JSON.stringify(grant.data));
     const route = '/signers/authorizations/' + grant.data.authorizationId;
@@ -314,4 +314,116 @@ test('manual optional identities and all three signatures persist without codes'
   try {
     assert.equal((await request('/signers/manual', 'POST', { role: 'cliente', payload: signable() }, token)).status, 403);
   } finally { config.requireSignatureCode = false; }
+});
+
+test('client signers are isolated by institution and the no-code flow stores an immutable identity snapshot', async () => {
+  const token = await freshToken();
+  const catalog = (await request('/institutions', 'GET', null, token)).data.items;
+  const omni = catalog.find(item => item.code === 'OMNI'), clinic = catalog.find(item => item.code === 'CA');
+  const omniPeople = await request(`/institutions/${omni.id}/signers`, 'GET', null, token);
+  const clinicPeople = await request(`/institutions/${clinic.id}/signers`, 'GET', null, token);
+  assert.equal(omniPeople.data.items.length, 4);
+  assert.equal(clinicPeople.data.items.length, 1);
+  assert.ok(omniPeople.data.items.every(person => !clinicPeople.data.items.some(other => other.id === person.id)));
+
+  const content = signable(); content.form.cliente = `${omni.name} (${omni.code})`;
+  const signer = omniPeople.data.items[0];
+  const input = { institutionId: omni.id, signerId: signer.id, identification: 'ID escrito manualmente, sin formato nacional', payload: content };
+  const crossInstitution = await request('/signers/authorize-client', 'POST', { ...input, institutionId: clinic.id }, token);
+  assert.equal(crossInstitution.status, 400);
+  const authorized = await request('/signers/authorize-client', 'POST', input, token);
+  assert.equal(authorized.status, 200);
+  assert.equal(authorized.data.signer.signerIdentification, input.identification);
+  assert.equal(authorized.data.signer.signerInstitutionId, omni.id);
+  assert.equal(JSON.stringify(authorized.data).includes('code_hash'), false);
+  const route = `/signers/authorizations/${authorized.data.authorizationId}`;
+  assert.equal((await request(route + '/accept', 'POST', { accepted: true }, token)).status, 200);
+  const signed = await request(route + '/sign', 'POST', { signature: pngSignature, payload: content }, token);
+  assert.equal(signed.status, 200);
+  content.signatures.cliente = signed.data.signature; content.signatureMeta.cliente = signed.data.metadata;
+  const saved = await request('/reports', 'POST', { requestId: randomUUID(), payload: content }, token);
+  assert.equal(saved.status, 201);
+  await pool.query('UPDATE authorized_signers SET name=$2,treatment=$3 WHERE id=$1', [signer.id, 'Changed master name', 'Dr.']);
+  const historic = await request('/reports/' + saved.data.id, 'GET', null, token);
+  assert.equal(historic.data.payload.signatureMeta.cliente.signerName, signer.name);
+  assert.equal(historic.data.payload.signatureMeta.cliente.signerTreatment, signer.treatment);
+  assert.equal(historic.data.payload.signatureMeta.cliente.signerIdentification, input.identification);
+});
+
+test('a new responsible can be added permanently to its institution and signed without code', async () => {
+  const token = await freshToken();
+  const catalog = (await request('/institutions', 'GET', null, token)).data.items;
+  const institution = catalog.find(item => item.code === 'CA');
+  const created = await request(`/institutions/${institution.id}/signers`, 'POST', {
+    treatment: 'Lic.', firstName: 'Persona', lastName: 'Nueva',
+  }, token);
+  assert.equal(created.status, 201);
+  assert.equal(created.data.name, 'Persona Nueva');
+  const content = signable();
+  content.form.cliente = `${institution.name} (${institution.code})`;
+  const deniedByFlag = config.requireSignatureCode;
+  config.requireSignatureCode = true;
+  assert.equal((await request('/signers/authorize-client', 'POST', { institutionId: institution.id, signerId: created.data.id, identification: 'abc', payload: content }, token)).status, 403);
+  config.requireSignatureCode = deniedByFlag;
+  const available = await request(`/institutions/${institution.id}/signers`, 'GET', null, token);
+  assert.ok(available.data.items.some(person => person.id === created.data.id));
+  const grant = await request('/signers/authorize-client', 'POST', { institutionId: institution.id, signerId: created.data.id,
+    identification: 'Documento digitado al firmar', payload: content }, token);
+  assert.equal(grant.status, 200);
+  const route = `/signers/authorizations/${grant.data.authorizationId}`;
+  assert.equal((await request(route + '/accept', 'POST', { accepted: true }, token)).status, 200);
+  const signed = await request(route + '/sign', 'POST', { signature: pngSignature, payload: content }, token);
+  assert.equal(signed.status, 200);
+  content.signatures.cliente = signed.data.signature; content.signatureMeta.cliente = signed.data.metadata;
+  const saved = await request('/reports', 'POST', { requestId: randomUUID(), payload: content }, token);
+  assert.equal(saved.status, 201);
+  assert.equal(saved.data.payload.signatureMeta.cliente.signerName, 'Persona Nueva');
+  assert.equal(saved.data.payload.signatureMeta.cliente.signerIdentification, 'Documento digitado al firmar');
+});
+
+
+test('empty institutions, optional document, foreign/inactive signers and client bypass', async () => {
+  const token = await freshToken();
+  const catalog = (await request('/institutions', 'GET', null, token)).data.items;
+  const institution = catalog.find(i => i.code === 'CM');
+  assert.deepEqual((await request(`/institutions/${institution.id}/signers`, 'GET', null, token)).data.items, []);
+  const person = (await request(`/institutions/${institution.id}/signers`, 'POST', { firstName: 'Sin', lastName: 'Documento' }, token)).data;
+  const content = signable(); content.form.cliente = institution.code;
+  const body = { institutionId: institution.id, signerId: person.id, payload: content };
+  assert.equal((await request('/signers/manual', 'POST', { role: 'cliente', payload: content }, token)).status, 400);
+  const other = catalog.find(i => i.code === 'OMNI');
+  const otherPerson = (await request(`/institutions/${other.id}/signers`, 'GET', null, token)).data.items[0];
+  assert.equal((await request('/signers/authorize-client', 'POST', { ...body, signerId: otherPerson.id }, token)).status, 409);
+  assert.equal((await request('/signers/authorize-client', 'POST', body, '')).status, 401);
+  const grant = await request('/signers/authorize-client', 'POST', body, token);
+  assert.equal(grant.status, 200);
+  const route = `/signers/authorizations/${grant.data.authorizationId}`;
+  const outsider = (await request('/auth/login', 'POST', { user: 'second-user', password }, '')).data.token;
+  assert.equal((await request(route + '/accept', 'POST', { accepted: true }, outsider)).status, 403);
+  await request(route + '/accept', 'POST', { accepted: true }, token);
+  const signed = await request(route + '/sign', 'POST', { signature: pngSignature, payload: content }, token);
+  content.signatures.cliente = signed.data.signature; content.signatureMeta.cliente = signed.data.metadata;
+  assert.equal(content.signatureMeta.cliente.signerIdentification, '');
+  const changed = structuredClone(content); changed.form.cliente = other.name;
+  assert.equal((await request('/reports', 'POST', { requestId: randomUUID(), payload: changed }, token)).status, 400);
+  assert.equal((await request('/reports', 'POST', { requestId: randomUUID(), payload: content }, token)).status, 201);
+  await pool.query('UPDATE authorized_signers SET active=false WHERE id=$1', [person.id]);
+  assert.equal((await request('/signers/authorize-client', 'POST', body, token)).status, 409);
+});
+
+test('owners can delete saved signed reports and drafts without affecting other users or copies', async () => {
+  const token = await freshToken(), content = signable();
+  await authorize(content, token, 'tecnico');
+  const saved = (await request('/reports', 'POST', { requestId: randomUUID(), payload: content }, token)).data;
+  const copy = (await request('/reports/' + saved.id + '/duplicate', 'POST', { requestId: randomUUID(), date: '2026-10-06' }, token)).data;
+  const outsider = (await request('/auth/login', 'POST', { user: 'second-user', password }, '')).data.token;
+  assert.equal((await request('/reports/' + saved.id, 'DELETE', null, '')).status, 401);
+  assert.equal((await request('/reports/' + saved.id, 'DELETE', null, outsider)).status, 404);
+  assert.equal((await request('/reports/' + saved.id, 'DELETE', null, token)).status, 204);
+  assert.equal((await request('/reports/' + saved.id, 'GET', null, token)).status, 404);
+  assert.equal((await pool.query('SELECT id FROM signature_authorizations WHERE report_id=$1', [saved.id])).rowCount, 0);
+  assert.equal((await request('/reports/' + saved.id, 'DELETE', null, token)).status, 404);
+  assert.equal((await request('/reports/' + copy.id, 'GET', null, token)).status, 200);
+  assert.equal((await request('/reports/' + copy.id, 'DELETE', null, token)).status, 204);
+  assert.equal((await request('/reports/not-a-uuid', 'DELETE', null, token)).status, 400);
 });
