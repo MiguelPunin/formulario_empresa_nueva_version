@@ -250,8 +250,14 @@
     const active = useRef(true);
     const requestRef = useRef(null);
     const busyRef = useRef(false);
-    const [phase, setPhase] = useState('code');
+    const [phase, setPhase] = useState('loading');
     const [code, setCode] = useState('');
+    const [identity, setIdentity] = useState({ name: '', identification: '', title: '' });
+    useEffect(() => {
+      ReportAPI.request('/signers/settings').then(settings => {
+        if (active.current) setPhase(settings.requireSignatureCode ? 'code' : 'manual');
+      }).catch(err => { if (active.current) setError(err.message); });
+    }, []);
     const [grant, setGrant] = useState(null);
     const [accepted, setAccepted] = useState(false);
     const [loading, setLoading] = useState(false);
@@ -270,7 +276,10 @@
       busyRef.current = true; setLoading(true); setError('');
       const controller = new AbortController(); requestRef.current = controller;
       try {
-        if (phase === 'code') {
+        if (phase === 'manual') {
+          const result = await ReportAPI.request('/signers/manual', { method: 'POST', body: { ...identity, role, payload }, signal: controller.signal });
+          if (active.current) { setGrant(result); setPhase('accept'); }
+        } else if (phase === 'code') {
           const result = await ReportAPI.request('/signers/validate', { method: 'POST', body: { code, role, payload }, signal: controller.signal });
           if (active.current) { setCode(''); setGrant(result); setPhase('accept'); }
         } else {
@@ -292,11 +301,19 @@
       <form onSubmit=${advance}>
         <h2 id="authorization-title">${phase === 'code' ? 'Autorización de firma' : 'Confirmación de firma'}</h2>
         <p>${label}</p>
-        ${phase === 'code' ? html`<label className="authorization-code">Ingrese su clave personal para continuar.
+        ${phase === 'loading' && html`<p>Cargando…</p>`}
+        ${phase === 'manual' && html`<p>Datos opcionales. Puedes dejarlos en blanco.</p>
+          ${[['name', 'Nombres y apellidos'], ['identification', 'Cédula / documento'], ['title', 'Título / cargo']].map(([field, text]) => html`
+            <label className="authorization-code">${text}
+              <input type="text" maxLength="500" value=${identity[field]} disabled=${loading}
+                onInput=${event => setIdentity(previous => ({ ...previous, [field]: event.target.value }))} /></label>`)}
+        `}
+        ${phase === 'code' && html`<label className="authorization-code">Ingrese su clave personal para continuar.
           <input type="password" autoComplete="off" maxLength="128" required autoFocus
-            value=${code} onInput=${event => setCode(event.target.value)} disabled=${loading} /></label>` : html`
+            value=${code} onInput=${event => setCode(event.target.value)} disabled=${loading} /></label>`}
+        ${phase === 'accept' && html`
           <div className="signer-identity"><strong>${grant.signer.signerTitle} ${grant.signer.signerName}</strong>
-            <span>C.I. ${grant.signer.signerIdentification}</span>
+            ${grant.signer.signerIdentification && html`<span>C.I. ${grant.signer.signerIdentification}</span>`}
             ${grant.signer.demo && html`<small>DEMO · identificación pendiente de datos definitivos</small>`}</div>
           <p>${grant.signer.acceptanceText}</p>
           <label className="authorization-check"><input type="checkbox" checked=${accepted} disabled=${loading}
@@ -305,8 +322,8 @@
         ${error && html`<p role="alert" className="report-error">${error}</p>`}
         <div className="signature-actions">
           <button type="button" className="secondary" onClick=${onClose}>Cancelar</button>
-          <button type="submit" disabled=${loading || (phase === 'accept' ? !accepted : !code)}>
-            ${loading ? 'Validando…' : phase === 'code' ? 'Continuar' : 'Aceptar y continuar'}</button>
+          <button type="submit" disabled=${loading || phase === 'loading' || (phase === 'accept' && !accepted) || (phase === 'code' && !code)}>
+            ${loading ? 'Validando…' : phase !== 'accept' ? 'Continuar' : 'Aceptar y continuar'}</button>
         </div>
       </form>
     </dialog>`;
@@ -459,10 +476,10 @@
     const [repuestosEnabled, setRepuestosEnabled] = useState(true);
     const [pdfGenerating, setPdfGenerating] = useState(false);
     const sheetRef = useRef(null);
-    const [signatures, setSignatures] = useState({ tecnico: '', cliente: '' });
+    const [signatures, setSignatures] = useState({ tecnico: '', cliente: '', adicional: '' });
     const [signatureTarget, setSignatureTarget] = useState(null);
     const [documentId, setDocumentId] = useState(() => crypto.randomUUID());
-    const [signatureMeta, setSignatureMeta] = useState({ tecnico: null, cliente: null });
+    const [signatureMeta, setSignatureMeta] = useState({ tecnico: null, cliente: null, adicional: null });
     const signedContent = useRef(null);
     const [institutions, setInstitutions] = useState([]);
     const [institutionsError, setInstitutionsError] = useState('');
@@ -482,7 +499,7 @@
     const contentKey = JSON.stringify({ reportNumber, brandId: brand.id, form, equipoRows, repuestoRows, repuestosEnabled, documentId });
     useEffect(() => {
       if (!readOnly && signedContent.current && signedContent.current !== contentKey) {
-        setSignatures({ tecnico: '', cliente: '' }); setSignatureMeta({ tecnico: null, cliente: null });
+        setSignatures({ tecnico: '', cliente: '', adicional: '' }); setSignatureMeta({ tecnico: null, cliente: null, adicional: null });
         signedContent.current = null;
         setMessage('El contenido cambió. Autoriza y realiza nuevamente las firmas antes de confirmar.');
       }
@@ -542,8 +559,8 @@
       setDocumentId(nextDocumentId);
       setRepuestosEnabled(data.repuestosEnabled);
       const legacyEditable = editable && saved.status !== 'confirmed' && !data.signatureMeta;
-      setSignatures(legacyEditable ? { tecnico: '', cliente: '' } : data.signatures);
-      setSignatureMeta(data.signatureMeta || { tecnico: null, cliente: null });
+      setSignatures(legacyEditable ? { tecnico: '', cliente: '', adicional: '' } : data.signatures);
+      setSignatureMeta(data.signatureMeta || { tecnico: null, cliente: null, adicional: null });
       signedContent.current = JSON.stringify({ reportNumber: saved.number, brandId: data.brandId, form: data.form, equipoRows: data.equipoRows,
         repuestoRows: data.repuestoRows, repuestosEnabled: data.repuestosEnabled, documentId: nextDocumentId });
       setReadOnly(!editable || saved.status === 'confirmed'); setPendingSave(null); setSignatureTarget(null);
@@ -635,10 +652,10 @@
 
     function clearForm(user = currentUser) {
       setDocumentId(crypto.randomUUID()); signedContent.current = null;
-      setSignatureMeta({ tecnico: null, cliente: null });
+      setSignatureMeta({ tecnico: null, cliente: null, adicional: null });
       setRecord(null); setReadOnly(false); setPendingSave(null); setError(''); setMessage('');
       setRepuestosEnabled(true);
-      setSignatures({ tecnico: '', cliente: '' });
+      setSignatures({ tecnico: '', cliente: '', adicional: '' });
       setSignatureTarget(null);
       setReportNumber('');
       setForm({ ...createInitialForm(), unidadSoporte: user?.siglas || '' });
@@ -1167,8 +1184,8 @@
             </div>
 
             <div className="signature">
-              ${[['tecnico', 'Servicio técnico'], ['cliente', 'Cliente']].map(([key, label]) => html`
-                <div key=${key} className="signature-slot">
+              ${[['tecnico', 'Servicio técnico'], ['cliente', 'Cliente'], ['adicional', 'Firma adicional (opcional)']].map(([key, label]) => html`
+                <div key=${key} className=${'signature-slot' + (key === 'adicional' && !signatures[key] ? ' empty-additional-signature' : '')}>
                   <div className="signature-controls">
                     <button type="button" className="secondary" onClick=${() => setSignatureTarget(key)}>
                       ${signatures[key] ? 'Editar firma' : 'Firmar / cargar imagen'} — ${label}
@@ -1181,7 +1198,7 @@
                   </div>
                   ${signatures[key] && signatureMeta[key] && html`<div className="signer-identity signature-caption">
                     <strong>${signatureMeta[key].signerTitle} ${signatureMeta[key].signerName}</strong>
-                    <span>C.I. ${signatureMeta[key].signerIdentification}</span>
+                    ${signatureMeta[key].signerIdentification && html`<span>C.I. ${signatureMeta[key].signerIdentification}</span>`}
                     ${signatureMeta[key].demo && html`<small>DEMO · C.I. pendiente</small>`}
                   </div>`}
                   <div className="line">${label}</div>
@@ -1195,7 +1212,7 @@
           onClose=${() => setChoosingBrand(false)}
           onSelect=${id => { setBrandId(id); setChoosingBrand(false); }} />`}
         ${currentUser && signatureTarget && html`<${SignatureAuthorization}
-          label=${signatureTarget === 'tecnico' ? 'servicio técnico' : 'cliente'}
+          label=${signatureTarget === 'tecnico' ? 'servicio técnico' : signatureTarget === 'cliente' ? 'cliente' : 'firma adicional'}
           role=${signatureTarget} payload=${snapshot()}
           onClose=${() => setSignatureTarget(null)}
           onSave=${(image, metadata) => {

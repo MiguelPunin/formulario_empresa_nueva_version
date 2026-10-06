@@ -8,6 +8,7 @@ export function readConfig(env = process.env) {
   return {
     databaseUrl: env.DATABASE_URL,
     signerCodePepper: env.SIGNER_CODE_PEPPER || '',
+    requireSignatureCode: env.REQUIRE_SIGNATURE_CODE === 'true',
     sessionHours, port: Number(env.PORT || 3000),
     origins: (env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean),
   };

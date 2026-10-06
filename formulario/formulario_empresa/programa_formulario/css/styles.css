@@ -1187,3 +1187,5 @@
       .signature-caption small { font-size: 8px; }
       .signature-slot { break-inside: avoid !important; page-break-inside: avoid !important; }
     }
+
+@media print { .empty-additional-signature { display: none !important; } }

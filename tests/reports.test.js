@@ -287,3 +287,31 @@ test('custom report numbers persist, reject collisions and can change on a dupli
   assert.equal(confirmed.status, 200);
   assert.equal(confirmed.data.number, 'MANUAL-0043');
 });
+
+test('manual optional identities and all three signatures persist without codes', async () => {
+  const token = await freshToken(), content = signable();
+  assert.equal((await request('/signers/settings', 'GET', null, token)).data.requireSignatureCode, false);
+  for (const role of ['tecnico', 'cliente', 'adicional']) {
+    const identity = role === 'cliente' ? { name: 'Persona manual', identification: '1234567890', title: 'Ing.' } : {};
+    const grant = await request('/signers/manual', 'POST', { role, payload: content, ...identity }, token);
+    assert.equal(grant.status, 200, JSON.stringify(grant.data));
+    const route = '/signers/authorizations/' + grant.data.authorizationId;
+    assert.equal((await request(route + '/sign', 'POST', { signature: pngSignature, payload: content }, token)).status, 403);
+    await request(route + '/accept', 'POST', { accepted: true }, token);
+    const signed = await request(route + '/sign', 'POST', { signature: pngSignature, payload: content }, token);
+    assert.equal(signed.status, 200);
+    assert.equal(signed.data.metadata.signerId, null);
+    assert.equal(signed.data.metadata.signerName, identity.name || '');
+    content.signatures[role] = signed.data.signature;
+    content.signatureMeta[role] = signed.data.metadata;
+  }
+  const forged = structuredClone(content); forged.signatureMeta.adicional.signerName = 'Cambio';
+  assert.equal((await request('/reports', 'POST', { requestId: randomUUID(), payload: forged }, token)).status, 400);
+  const result = await request('/reports', 'POST', { requestId: randomUUID(), payload: content }, token);
+  assert.equal(result.status, 201, JSON.stringify(result.data));
+  assert.deepEqual((await request('/reports/' + result.data.id, 'GET', null, token)).data.payload, content);
+  config.requireSignatureCode = true;
+  try {
+    assert.equal((await request('/signers/manual', 'POST', { role: 'cliente', payload: signable() }, token)).status, 403);
+  } finally { config.requireSignatureCode = false; }
+});

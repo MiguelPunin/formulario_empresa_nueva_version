@@ -90,7 +90,7 @@ export function createApp(pool, config) {
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(request_id) DO NOTHING RETURNING ${summaryColumns},payload`,
       [payload.form.cliente, payload.form.fecha, status, payload, hashPayload(payload), sourceId, requestId, requestHash, ownerId]);
       if (inserted.rowCount) {
-        await verifyReportSignatures(client, ownerId, payload, inserted.rows[0].id);
+        await verifyReportSignatures(client, ownerId, payload, inserted.rows[0].id, config);
         await client.query('COMMIT');
         return inserted.rows[0];
       }
@@ -138,7 +138,7 @@ export function createApp(pool, config) {
         if (previous.payload_hash !== hash) throw fail(409, 'El reporte ya está confirmado. Duplícalo para realizar cambios.');
       } else {
         if (previous.version !== data.version) throw fail(409, 'El borrador cambió en otro dispositivo. Vuelve a abrirlo desde el historial.');
-        await verifyReportSignatures(client, req.userId, data.payload, id);
+        await verifyReportSignatures(client, req.userId, data.payload, id, config);
         await client.query(`UPDATE reports SET customer=$2,report_date=$3,payload=$4,payload_hash=$5,status='confirmed',version=version+1,updated_at=now() WHERE id=$1`,
           [id, data.payload.form.cliente, data.payload.form.fecha, data.payload, hash]);
       }
