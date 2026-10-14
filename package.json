@@ -11,7 +11,7 @@
     "migrate": "node --env-file-if-exists=.env server/migrate.js",
     "password": "node scripts/password.js",
     "build": "node scripts/build.js",
-    "test": "node --env-file-if-exists=.env --test tests/*.test.js",
+    "test": "node --env-file-if-exists=.env --test --test-concurrency=1 tests/*.test.js",
     "seed:signers:demo": "node --env-file-if-exists=.env scripts/import-signers.js scripts/data/signers-demo.json"
   },
   "dependencies": {

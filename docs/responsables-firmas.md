@@ -1,5 +1,7 @@
 # Responsables por institución y firmas
 
+Las reglas actuales de numeración, edición y bloqueo están en [consecutivos-edicion-firmas.md](consecutivos-edicion-firmas.md). La firma técnica ahora obtiene el nombre del usuario autenticado; la adicional se muestra solo al solicitarla.
+
 ## Arquitectura y alcance
 
 El frontend React/HTM (`react-app.js`) crea el snapshot del reporte y ofrece el catálogo `GET /api/institutions` en el campo Cliente. El backend Express (`server/app.js`) autentica al usuario, guarda los reportes con su propietario y confirma los borradores. PostgreSQL conserva `reports.payload`, las instituciones, los firmantes y las autorizaciones. La impresión usa el mismo reporte mediante `window.print()`; la firma PNG y su identidad se leen del snapshot guardado, sin consultar el catálogo al imprimir.
@@ -61,7 +63,7 @@ La migración debe ejecutarse en cada base donde se publique el cambio, antes de
 
 ## Verificación
 
-- Suite PostgreSQL: creación, guardado, duplicación, autenticación, privacidad, retención, números editables, firma por código, firmas manuales, pertenencia institucional, alta permanente, documento opcional/libre, integridad e identidad histórica.
+- Suite PostgreSQL: creación, guardado, edición, autenticación, privacidad, retención, consecutivos por usuario, firma por código, firmas manuales, pertenencia institucional, alta permanente, documento opcional/libre, integridad e identidad histórica.
 - Navegador real: flujo de OMNI con responsable existente en escritorio; institución vacía y alta en móvil; carga de imagen, confirmación, guardado y ausencia de errores JavaScript.
 - PDF real generado y revisado visualmente: firma, tratamiento, nombre y documento manual presentes; firma adicional vacía oculta.
 - Build y comprobación de diferencias de Git.

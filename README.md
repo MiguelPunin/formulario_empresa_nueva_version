@@ -5,15 +5,15 @@ La aplicación conserva React + HTM, el formulario biomédico, las tres marcas, 
 ## Uso
 
 1. Inicia sesión con tu cuenta personal guardada en PostgreSQL. Cada dispositivo recibe su propia sesión; salir en uno no desconecta a los demás.
-2. Elige la empresa, llena el reporte y pulsa **Guardar reporte** o **Guardar e imprimir**. Cliente y fecha son obligatorios. El servidor asigna el número `RS-000001`, etc.; nunca se calcula en el dispositivo.
-3. El reporte confirmado es inmutable. El historial permite **Ver**, **Duplicar** e **Imprimir**. No se ofrecen edición ni eliminación de confirmados.
-4. **Duplicar** crea en PostgreSQL un borrador nuevo, con otro identificador/número y la fecha local actual. Conserva cliente, equipos, repuestos, marca y textos. Limpia ambas firmas y autorizaciones: cada documento nuevo requiere clave, aceptación y firma. Reinicia las horas, first time fix y estado final. Revisa los textos de la visita anterior antes de confirmar.
-5. Un borrador duplicado puede retomarse mediante **Continuar borrador**. Sus cambios abiertos solo se persisten al guardar/confirmar. No hay autoguardado ni modo sin conexión.
+2. Elige la empresa y completa unidad, ciudad y cliente. Al guardar o iniciar una firma se reserva el número en mayúsculas, por ejemplo `DA.UIO.HVQ.001`. El contador pertenece al usuario y continúa aunque cambie de ciudad, cliente o empresa.
+3. **Guardar reporte** conserva un borrador editable mientras no tenga firma del cliente. El historial permite **Ver**, **Editar**, **Imprimir / PDF** y **Eliminar** (con confirmación del propietario).
+4. Al guardar la firma del cliente, se bloquean los datos y las firmas existentes. Solo se admite añadir una firma adicional pendiente. La firma técnica toma el nombre del usuario autenticado y por sí sola no bloquea el reporte.
+5. **Editar** actualiza el mismo registro y conserva su número. Los cambios abiertos se persisten al pulsar Guardar; no hay autoguardado ni modo sin conexión. La duplicación está deshabilitada.
 6. El historial busca cliente, número y texto del formulario/equipos/repuestos, filtra por fechas/estado, muestra 20 registros por página y actualiza cada 30 segundos mientras está visible. También tiene Actualizar.
 
 El historial y los documentos guardados siempre vienen de PostgreSQL. Los campos que aún estás escribiendo y el token de sesión viven solo en memoria temporal de React. Recargar requiere iniciar sesión nuevamente; no borra el historial. Al expirar una sesión, volver a ingresar conserva el reporte abierto. Nunca se guardan reportes ni tokens en localStorage/sessionStorage. Se elimina, de forma tolerante a errores, la antigua entrada `loggedUser`.
 
-**Impresión:** se reutiliza `downloadPDF()` → `window.print()` y el CSS existente. Guardar e imprimir confirma primero; cancelar el diálogo de impresión no elimina lo guardado. La reimpresión recupera el mismo contenido y las firmas desde la API. Ctrl/Cmd+P pasa por guardar; el menú nativo del navegador solo permite imprimir un reporte confirmado. Los controles del historial no se imprimen.
+**Impresión:** se reutiliza `downloadPDF()` → `window.print()` y el CSS existente. Guardar e imprimir guarda primero; cancelar el diálogo de impresión no elimina lo guardado. La reimpresión recupera el mismo contenido y las firmas desde la API. Ctrl/Cmd+P pasa por guardar; el menú nativo del navegador solo permite imprimir un reporte guardado. El nombre sugerido al guardar como PDF es el número persistido en mayúsculas más `.pdf`. Los controles del historial no se imprimen.
 
 ## Arquitectura y archivos
 
@@ -33,7 +33,7 @@ Archivos nuevos:
 | `package.json`, `package-lock.json` | Dependencias y comandos reproducibles |
 | `.gitignore`, `.env.example` | Exclusión de secretos y plantilla de configuración |
 | `server/index.js`, `server/config.js` | Arranque, conexión y configuración |
-| `server/app.js` | Autenticación, API, historial, creación, duplicación y confirmación |
+| `server/app.js` | Autenticación, API, historial, creación, edición y bloqueo por firma del cliente |
 | `server/password.js`, `scripts/password.js` | Hash scrypt y generación interactiva sin mostrar contraseña |
 | `server/validation.js` | Contrato basado en los campos reales |
 | `server/migrate.js`, `server/migrations/1790553600000_initial.cjs` | Migraciones con node-pg-migrate |
@@ -48,21 +48,21 @@ Archivos nuevos:
 Archivos modificados, dentro de `formulario/formulario_empresa/programa_formulario/`:
 
 - `index.html`: carga configuración, cliente API e historial.
-- `js/react-app.js`: login servidor, guardado, numeración automática, carga de históricos y duplicados; reutiliza campos y firmas existentes.
+- `js/react-app.js`: login servidor, guardado, numeración automática, carga y edición de históricos; reutiliza campos y firmas existentes.
 - `css/styles.css`: estilos del historial, vista protegida y exclusión de controles al imprimir; mantiene las paletas y el diseño existente.
 - `js/components/state.js`: elimina credenciales de demostración del módulo inactivo.
 
 ## Datos y concurrencia
 
-`reports` tiene UUID generado por PostgreSQL, secuencia numérica única, número legible generado, cliente, fecha del reporte, estado `draft/confirmed`, `payload` JSONB, versión, origen de copia y timestamps. `payload` contiene `schemaVersion`, `brandId`, `form`, `equipoRows`, `repuestoRows`, `repuestosEnabled` y ambas firmas PNG. `form` conserva unidad de soporte, cliente, fecha, ciudad, área, teléfono, actividad, condición, falla, actividad realizada, horas, first time fix, estado final, técnico y observaciones. El tiempo trabajado se sigue calculando a partir de las horas.
+`reports` tiene UUID generado por PostgreSQL, secuencia numérica única, número legible generado, cliente, fecha del reporte, estado `draft/confirmed`, `payload` JSONB, versión, origen de copia y timestamps. `payload` contiene `schemaVersion`, `brandId`, `form`, `equipoRows`, `repuestoRows`, `repuestosEnabled` y las firmas PNG (técnica, cliente y adicional opcional). `form` conserva unidad de soporte, cliente, fecha, ciudad, área, teléfono, actividad, condición, falla, actividad realizada, horas, first time fix, estado final, técnico y observaciones. El tiempo trabajado se sigue calculando a partir de las horas.
 
 `users` guarda usuario, nombre completo, siglas, hash scrypt y estado activo. `sessions` referencia al usuario y guarda el hash del token, versión de credenciales y vencimiento. `pgmigrations` registra las migraciones.
 
-- La secuencia y las restricciones UNIQUE evitan colisiones incluso con guardados simultáneos. Puede haber saltos de numeración (reintentos/borradores); no es numeración fiscal.
+- `report_counters` y `report_number_reservations` asignan consecutivos por usuario de forma atómica e idempotente. Las reservas se conservan aunque se elimine o venza el reporte. Puede haber saltos por reservas abandonadas; nunca se reutilizan.
 - `requestId` identifica una operación, no el documento. Los POST repetidos con la misma clave devuelven el mismo registro; reutilizarla con otros datos devuelve 409.
 - La confirmación de borradores usa una transacción, bloqueo de fila y versión. Dos cambios diferentes no se sobrescriben; uno recibe 409.
-- Un trigger bloquea modificación/eliminación de reportes confirmados, también fuera de la API. Las migraciones no incluyen un rollback destructivo.
-- La vista se bloquea durante un guardado incierto y ofrece reintentar con la misma operación. Si recargas o cambias de vista tras un fallo, consulta el historial antes de generar otra copia.
+- Un trigger protege el número, propietario, vencimiento y contenido aprobado. Solo admite la firma adicional pendiente; el borrado requiere propietario autenticado o vencimiento. Las migraciones no incluyen rollback destructivo.
+- La vista se bloquea durante un guardado incierto y ofrece reintentar con la misma operación. Si recargas o cambias de vista tras un fallo, consulta el historial antes de iniciar otro reporte.
 
 ## API
 
@@ -74,11 +74,13 @@ Todos los endpoints de reportes requieren `Authorization: Bearer <token>`. Los c
 | `POST /api/auth/login` | `{user,password}` → `{token,user}`; límite de intentos |
 | `GET /api/auth/me` | Cuenta autenticada |
 | `POST /api/auth/logout` | Revoca la sesión de ese dispositivo |
-| `POST /api/reports` | `{requestId,payload}` → documento confirmado |
+| `POST /api/reports` | `{requestId,payload}` → borrador o confirmado según firma del cliente |
 | `GET /api/reports?q=&from=&to=&status=&page=` | Historial paginado, sin firmas ni payload completo |
 | `GET /api/reports/:id` | Snapshot completo para ver/reimprimir |
-| `POST /api/reports/:id/duplicate` | `{requestId,date}` → nuevo borrador persistido |
-| `PATCH /api/reports/:id/confirm` | `{version,payload}` → confirmación inmutable |
+| `POST /api/reports/number` | `{documentId,prefix}` → reserva idempotente del consecutivo del usuario |
+| `POST /api/reports/:id/duplicate` | Deshabilitado: HTTP 410 |
+| `PATCH /api/reports/:id` | `{version,payload}` → editar borrador o añadir firma adicional; `/confirm` permanece como alias |
+| `DELETE /api/reports/:id` | Eliminar un reporte propio |
 
 Fechas: `YYYY-MM-DD`. Estados: `draft`, `confirmed`. Errores: 400 datos inválidos, 401 acceso/sesión, 403 origen, 404 inexistente, 409 conflicto, 413 tamaño, 429 intentos, 503 servicio/base no disponible. No se devuelven stack traces ni credenciales. Los confirmados no se pueden editar; su propietario puede eliminarlos con DELETE /api/reports/:id.
 
@@ -174,7 +176,7 @@ node --env-file-if-exists=.env scripts/import-users.js .test-artifacts/users-loc
 
 El archivo privado contiene un arreglo de objetos con `username`, `name`, `initials` y `password` (al menos 8 caracteres). No se sube al repositorio. El importador guarda hashes scrypt y no altera usuarios existentes. En otra base, ejecuta la migracion y la importacion con su DATABASE_URL; las cuentas locales no se publican automaticamente. Las variables APP_USERNAME/APP_PASSWORD_HASH ya no se usan.
 
-Cada usuario solo puede listar, abrir, duplicar y confirmar sus propios reportes. Los reportes nuevos y duplicados reciben las siglas del usuario en Unidad tecnica de soporte, que sigue siendo editable. Los documentos guardados conservan su contenido. La migracion de usuarios cierra las sesiones antiguas sin eliminar reportes.
+Cada usuario solo puede listar, abrir, editar y firmar sus propios reportes. Los reportes nuevos reciben las siglas del usuario en Unidad tecnica de soporte, que sigue siendo editable. Los documentos guardados conservan su contenido. La migracion de usuarios cierra las sesiones antiguas sin eliminar reportes.
 
 
 ## Privacidad y retencion de 14 dias
@@ -188,7 +190,7 @@ Los reportes anteriores sin autor verificable quedan con owner_id nulo y ocultos
 
 ## Firmantes autorizados e instituciones
 
-La guía completa de configuración, claves DEMO, endpoints, pruebas y actualización de datos está en [docs/FIRMAS_AUTORIZADAS.md](docs/FIRMAS_AUTORIZADAS.md). La nueva regla de duplicación sustituye la anterior: las copias requieren firmas nuevas.
+La guía completa de configuración, claves DEMO, endpoints, pruebas y actualización de datos está en [docs/FIRMAS_AUTORIZADAS.md](docs/FIRMAS_AUTORIZADAS.md). La duplicación está deshabilitada. Las reglas actuales están en [docs/consecutivos-edicion-firmas.md](docs/consecutivos-edicion-firmas.md).
 
 ## Responsables por institución
 
@@ -200,6 +202,6 @@ En **Historial de reportes**, el botón **Eliminar** pide confirmación antes de
 
 ### Número de reporte por campos
 
-El prefijo se compone en minúsculas como `unidad.ciudad.institución.`. Usa las siglas del catálogo completo de instituciones y respeta las ediciones de la unidad técnica. La terminación numérica se escribe manualmente, conserva ceros iniciales y se mantiene al cambiar los campos. Los reportes guardados conservan su número; las copias sin número manual empiezan con el prefijo, sin reutilizar el consecutivo.
+El prefijo se compone en mayúsculas como `UNIDAD.CIUDAD.INSTITUCIÓN.`. Las siglas provienen de los campos y del catálogo. El sufijo es automático, independiente por usuario y empieza en `001` o después del mayor consecutivo histórico disponible. Se reserva antes de firmar o guardar y después permanece fijo. Consulta [las reglas y la migración](docs/consecutivos-edicion-firmas.md).
 
-Ciudades configuradas: Quito/UIO, Guayaquil/GYE, Cuenca/CUE, Manta/MEC, Loja/LOH y Francisco de Orellana/OCC (también Coca y El Coca). Referencia: [DGAC, acuerdo 018/2024](https://www.aviacioncivil.gob.ec/wp-content/uploads/downloads/2024/04/acuerdo_nro__018-20240723205001712757746.pdf). Para otras ciudades, el campo avisa que se escriba su sigla manualmente en el número; no se inventan abreviaturas. El número completo sigue siendo editable. No se guarda un prefijo incompleto ni se asigna automáticamente el sufijo desde esta interfaz.
+Ciudades configuradas: Quito/UIO, Guayaquil/GYE, Cuenca/CUE, Manta/MEC, Loja/LOH y Francisco de Orellana/OCC (también Coca y El Coca). Referencia: [DGAC, acuerdo 018/2024](https://www.aviacioncivil.gob.ec/wp-content/uploads/downloads/2024/04/acuerdo_nro__018-20240723205001712757746.pdf). Para otras ciudades, el campo avisa que se escriba su sigla manualmente en el número; no se inventan abreviaturas. El prefijo puede corregirse antes de reservar el número. El sufijo lo asigna el servidor; no se guarda un prefijo incompleto.

@@ -15,7 +15,7 @@ const signerMetadata = z.object({
   acceptedAt: z.iso.datetime(), signedAt: z.iso.datetime(),
 }).strict();
 export const payloadSchema = z.object({
-  reportNumber: z.string().max(60).optional(),
+  reportNumber: z.string().trim().toUpperCase().max(60).optional(),
   schemaVersion: z.literal(1), brandId: z.enum(['totalcare', 'pharmadial', 'mancheno']),
   repuestosEnabled: z.boolean(), documentId: z.uuid().optional(),
   signatureMeta: z.object({ tecnico: signerMetadata.nullable(), cliente: signerMetadata.nullable(), adicional: signerMetadata.nullable().optional() }).strict().optional(),
@@ -36,7 +36,6 @@ export const payloadSchema = z.object({
 }).strict();
 export const createSchema = z.object({ requestId: z.uuid(), payload: payloadSchema }).strict();
 export const finalizeSchema = z.object({ version: z.number().int().positive(), payload: payloadSchema }).strict();
-export const duplicateSchema = z.object({ requestId: z.uuid(), date }).strict();
 export const filtersSchema = z.object({
   q: z.string().max(200).default(''), from: date.optional(), to: date.optional(),
   status: z.enum(['draft', 'confirmed']).optional(),

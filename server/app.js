@@ -1,15 +1,16 @@
-import { registerSignerRoutes, verifyReportSignatures } from './signers.js';
+import { reserveNumber, requireNumber } from './report-numbering.js';
+import { registerSignerRoutes, verifyReportSignatures, canonical } from './signers.js';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
-import { randomBytes, randomUUID, createHash } from 'node:crypto';
+import { randomBytes, createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { hashPassword, verifyPassword } from './password.js';
-import { createSchema, duplicateSchema, finalizeSchema, filtersSchema } from './validation.js';
+import { createSchema, finalizeSchema, filtersSchema } from './validation.js';
 const digest = value => createHash('sha256').update(value).digest('hex');
-const hashPayload = value => digest(JSON.stringify(value));
+const hashPayload = value => digest(JSON.stringify(canonical(value)));
 const webRoot = fileURLToPath(new URL('../formulario/formulario_empresa/programa_formulario/', import.meta.url));
 const summaryColumns = 'id, number, customer, report_date::text AS date, status, version, source_id, created_at, updated_at';
 function fail(status, message) { return Object.assign(new Error(message), { status, publicMessage: message }); }
@@ -62,6 +63,10 @@ export function createApp(pool, config) {
   });
   app.get('/api/auth/me', (req, res) => res.json(req.user));
   registerSignerRoutes(app, pool, config);
+  app.post('/api/reports/number', async (req, res) => {
+    const data = parse(z.object({ documentId: z.uuid(), prefix: z.string().trim().toUpperCase().max(40).regex(/^[A-Z0-9]+\.[A-Z0-9]+\.[A-Z0-9]+\.$/) }).strict(), req.body);
+    res.json({ number: await reserveNumber(pool, req.userId, data.documentId, data.prefix) });
+  });
   app.get('/api/reports', async (req, res) => {
     const f = parse(filtersSchema, req.query);
     // Search only report text; signature base64 is intentionally excluded.
@@ -97,12 +102,21 @@ export function createApp(pool, config) {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      await client.query('SELECT id FROM users WHERE id=$1 FOR UPDATE', [ownerId]);
+      const prior = await client.query(`SELECT ${summaryColumns},payload,request_hash FROM reports WHERE request_id=$1 AND owner_id=$2 AND expires_at>now()`, [requestId,ownerId]);
+      if (prior.rowCount) {
+        const { request_hash, ...record } = prior.rows[0];
+        if (request_hash !== requestHash) throw fail(409, 'Esta solicitud ya se guardó con otros datos. Abre el historial.');
+        await client.query('COMMIT'); return record;
+      }
+      const reservation = await requireNumber(client, ownerId, payload);
       // The unique request_id makes concurrent retries atomic, including lost responses.
-      const inserted = await client.query(`INSERT INTO reports(customer,report_date,status,payload,payload_hash,source_id,request_id,request_hash,owner_id)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(request_id) DO NOTHING RETURNING ${summaryColumns},payload`,
-      [payload.form.cliente, payload.form.fecha, status, payload, hashPayload(payload), sourceId, requestId, requestHash, ownerId]);
+      const inserted = await client.query(`INSERT INTO reports(customer,report_date,status,payload,payload_hash,source_id,request_id,request_hash,owner_id,number_reservation)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(request_id) DO NOTHING RETURNING ${summaryColumns},payload`,
+      [payload.form.cliente, payload.form.fecha, status, payload, hashPayload(payload), sourceId, requestId, requestHash, ownerId, reservation]);
       if (inserted.rowCount) {
         await verifyReportSignatures(client, ownerId, payload, inserted.rows[0].id, config);
+        await client.query('UPDATE report_number_reservations SET consumed=true WHERE id=$1', [reservation]);
         await client.query('COMMIT');
         return inserted.rows[0];
       }
@@ -117,42 +131,32 @@ export function createApp(pool, config) {
   }
   app.post('/api/reports', async (req, res) => {
     const data = parse(createSchema, req.body);
-    const record = await insertReport(req.userId, data.requestId, hashPayload(data.payload), data.payload, 'confirmed');
+    const record = await insertReport(req.userId, data.requestId, hashPayload(data.payload), data.payload, data.payload.signatures.cliente ? 'confirmed' : 'draft');
     res.status(201).json(record);
   });
-  app.post('/api/reports/:id/duplicate', async (req, res) => {
-    const id = parse(z.uuid(), req.params.id);
-    const data = parse(duplicateSchema, req.body);
-    const original = await pool.query('SELECT payload FROM reports WHERE id=$1 AND owner_id=$2 AND expires_at>now()', [id, req.userId]);
-    if (!original.rowCount) throw fail(404, 'El reporte original no existe.');
-    const payload = structuredClone(original.rows[0].payload);
-    delete payload.reportNumber;
-    payload.documentId = randomUUID();
-    payload.signatures = { tecnico: '', cliente: '' };
-    payload.signatureMeta = { tecnico: null, cliente: null };
-    payload.form.fecha = data.date;
-    payload.form.unidadSoporte = req.user.siglas;
-    payload.form.horaInicio = ''; payload.form.horaFinal = '';
-    payload.form.firstTimeFix = ''; payload.form.estadoFinal = '';
-    res.status(201).json(await insertReport(req.userId, data.requestId, hashPayload({ source: id, date: data.date }), payload, 'draft', id));
-  });
-  app.patch('/api/reports/:id/confirm', async (req, res) => {
+  app.post('/api/reports/:id/duplicate', (req, res) => res.status(410).json({ error: 'La duplicación de reportes fue deshabilitada. Crea un nuevo reporte.' }));
+  app.patch(['/api/reports/:id', '/api/reports/:id/confirm'], async (req, res) => {
     const id = parse(z.uuid(), req.params.id);
     const data = parse(finalizeSchema, req.body);
     const hash = hashPayload(data.payload);
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      const result = await client.query('SELECT status,version,payload_hash FROM reports WHERE id=$1 AND owner_id=$2 AND expires_at>now() FOR UPDATE', [id, req.userId]);
-      if (!result.rowCount) throw fail(404, 'El borrador no existe.');
+      const result = await client.query('SELECT status,version,payload_hash,payload,number FROM reports WHERE id=$1 AND owner_id=$2 AND expires_at>now() FOR UPDATE', [id, req.userId]);
+      if (!result.rowCount) throw fail(404, 'El reporte no existe.');
       const previous = result.rows[0];
-      if (previous.status === 'confirmed') {
-        if (previous.payload_hash !== hash) throw fail(409, 'El reporte ya está confirmado. Duplícalo para realizar cambios.');
-      } else {
-        if (previous.version !== data.version) throw fail(409, 'El borrador cambió en otro dispositivo. Vuelve a abrirlo desde el historial.');
-        await verifyReportSignatures(client, req.userId, data.payload, id, config);
-        await client.query(`UPDATE reports SET customer=$2,report_date=$3,payload=$4,payload_hash=$5,status='confirmed',version=version+1,updated_at=now() WHERE id=$1`,
-          [id, data.payload.form.cliente, data.payload.form.fecha, data.payload, hash]);
+      if (hashPayload(previous.payload) !== hash) {
+        if (previous.version !== data.version) throw fail(409, 'El reporte cambió en otro dispositivo. Vuelve a abrirlo desde el historial.');
+        if (data.payload.reportNumber !== previous.number || data.payload.documentId !== previous.payload.documentId) throw fail(409, 'El número y la identidad del reporte no se pueden cambiar.');
+        if (previous.status === 'confirmed') {
+          const approved = value => { const copy = structuredClone(value); delete copy.signatures.adicional; if (copy.signatureMeta) delete copy.signatureMeta.adicional; return copy; };
+          if (hashPayload(approved(previous.payload)) !== hashPayload(approved(data.payload)) || previous.payload.signatures.adicional || !data.payload.signatures.adicional) {
+            throw fail(409, 'El cliente ya aprobó este reporte. Solo se permite añadir la firma adicional pendiente.');
+          }
+        }
+        await verifyReportSignatures(client, req.userId, data.payload, id, config, previous.payload);
+        await client.query(`UPDATE reports SET customer=$2,report_date=$3,payload=$4,payload_hash=$5,status=$6,version=version+1,updated_at=now() WHERE id=$1`,
+          [id, data.payload.form.cliente, data.payload.form.fecha, data.payload, hash, data.payload.signatures.cliente ? 'confirmed' : 'draft']);
       }
       const saved = await client.query(`SELECT ${summaryColumns},payload FROM reports WHERE id=$1 AND owner_id=$2 AND expires_at>now()`, [id, req.userId]);
       await client.query('COMMIT'); res.json(saved.rows[0]);
@@ -167,7 +171,7 @@ export function createApp(pool, config) {
     if (res.headersSent) return next(error);
     if (error.type === 'entity.too.large') return res.status(413).json({ error: 'El reporte es demasiado grande. Reduce el contenido o las firmas.' });
     if (error instanceof SyntaxError && error.status === 400) return res.status(400).json({ error: 'Solicitud inválida.' });
-    if (error.code === '23505' && error.constraint === 'reports_number_key') return res.status(400).json({ error: 'Ese número de reporte ya existe. Escribe otro número.' });
+    if (error.code === '23505' && ['reports_number_key','reports_owner_number_key'].includes(error.constraint)) return res.status(400).json({ error: 'Ese número ya está asignado. Abre el reporte desde el historial.' });
     if (error.publicMessage) return res.status(error.status).json({ error: error.publicMessage });
     // Never log connection strings, request bodies, passwords or report content.
     console.error('Request failed', { code: error.code || 'INTERNAL', path: req.path });

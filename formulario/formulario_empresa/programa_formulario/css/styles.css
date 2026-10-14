@@ -1207,3 +1207,7 @@
     .client-signature-dialog .authorization-code { margin-bottom: 12px; }
 
     .history-delete { color: #a32323; border-color: #e5bcbc; }
+
+@media print {
+  .signature.has-additional-signature { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}

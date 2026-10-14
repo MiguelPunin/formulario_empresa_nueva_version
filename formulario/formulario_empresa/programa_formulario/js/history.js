@@ -1,7 +1,7 @@
 (function () {
   const html = htm.bind(React.createElement);
   const { useState, useEffect, useRef } = React;
-  window.ReportHistory = function ReportHistory({ onClose, onOpen, onDuplicate, onDeleted, busy }) {
+  window.ReportHistory = function ReportHistory({ onClose, onOpen, onDeleted, busy }) {
     const ref = useRef(null);
     const deletingRef = useRef(false);
     const [deleting, setDeleting] = useState(false);
@@ -70,9 +70,8 @@
         <td data-label="Estado">${row.status === 'confirmed' ? 'Confirmado' : 'Borrador'}</td>
         <td data-label="Acciones"><div className="history-actions">
           <button className="secondary" disabled=${busy || deleting || loading} onClick=${() => onOpen(row.id, 'view')}>Ver</button>
-          <button className="secondary" disabled=${busy || deleting || loading} onClick=${() => onDuplicate(row.id)}>Duplicar</button>
-          ${row.status === 'confirmed' ? html`<button disabled=${busy || deleting || loading} onClick=${() => onOpen(row.id, 'print')}>Imprimir</button>` :
-            html`<button disabled=${busy || deleting || loading} onClick=${() => onOpen(row.id, 'edit')}>Continuar borrador</button>`}
+          <button disabled=${busy || deleting || loading} onClick=${() => onOpen(row.id, 'print')}>Imprimir / PDF</button>
+          ${row.status !== 'confirmed' && html`<button disabled=${busy || deleting || loading} onClick=${() => onOpen(row.id, 'edit')}>Editar</button>`}
           <button className="secondary history-delete" disabled=${busy || deleting || loading} onClick=${() => removeReport(row)}>${deleting ? 'Espera…' : 'Eliminar'}</button>
         </div></td></tr>`)}</tbody></table></div>
       ${!loading && !error && !result.items.length && html`<p>No hay reportes para esta búsqueda.</p>`}

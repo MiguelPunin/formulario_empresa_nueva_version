@@ -53,124 +53,130 @@ test('API requires real authentication; two devices share one account', async ()
   tokenA = a.data.token; tokenB = b.data.token; assert.notEqual(tokenA, tokenB); assert.equal(a.status, 200);
   assert.equal((await request('/auth/me')).data.user, config.username);
 });
-test('creation, concurrent retries and distinct simultaneous saves are atomic', async () => {
-  const body = { requestId: randomUUID(), payload: payload() };
-  const retries = await Promise.all(Array.from({ length: 5 }, () => request('/reports', 'POST', body)));
-  retries.forEach(r => assert.equal(r.status, 201));
-  assert.equal(new Set(retries.map(r => r.data.id)).size, 1); saved = retries[0].data;
-  const distinct = await Promise.all(Array.from({ length: 5 }, () => request('/reports', 'POST', { requestId: randomUUID(), payload: payload() })));
-  assert.equal(new Set(distinct.map(r => r.data.number)).size, 5);
-  const conflict = await request('/reports', 'POST', { ...body, payload: { ...body.payload, brandId: 'mancheno' } });
-  assert.equal(conflict.status, 409);
-});
-test('second device reads exact saved snapshot and searches without SQL injection', async () => {
-  const detail = await request('/reports/' + saved.id, 'GET', null, tokenB);
-  assert.deepEqual(detail.data.payload, payload());
-  const result = await request('/reports?q=SER123&from=2026-09-27&to=2026-09-27&status=confirmed', 'GET', null, tokenB);
-  assert.equal(result.data.total, 6);
-  assert.equal((await request('/reports?q=' + encodeURIComponent("' OR 1=1 --"))).data.total, 0);
-  assert.equal((await request('/reports?from=2026-09-28')).data.total, 0);
-});
-test('duplicate creates persistent new draft, resets visit identity, preserves original', async () => {
-  const body = { requestId: randomUUID(), date: '2026-09-28' };
-  const copies = await Promise.all([request('/reports/' + saved.id + '/duplicate', 'POST', body), request('/reports/' + saved.id + '/duplicate', 'POST', body)]);
-  draft = copies[0].data; assert.equal(copies[0].status, 201); assert.equal(draft.id, copies[1].data.id);
-  assert.notEqual(draft.id, saved.id); assert.notEqual(draft.number, saved.number); assert.equal(draft.status, 'draft');
-  assert.equal(draft.payload.form.horaInicio, ''); assert.equal(draft.payload.form.fecha, '2026-09-28');
-  assert.equal(draft.payload.form.unidadSoporte, 'TS');
-  assert.deepEqual(draft.payload.signatures, { tecnico: '', cliente: '' });
-  assert.deepEqual((await request('/reports/' + saved.id)).data, saved);
-  assert.equal((await request('/reports?status=draft', 'GET', null, tokenB)).data.total, 1);
-});
-test('draft confirmation handles stale versions and simultaneous different edits', async () => {
-  const edited = structuredClone(draft.payload); edited.form.observaciones = 'Nueva visita';
-  assert.equal((await request('/reports/' + draft.id + '/confirm', 'PATCH', { version: 9, payload: edited })).status, 409);
-  const another = structuredClone(edited); another.form.cliente = 'Otro cliente';
-  const results = await Promise.all([request('/reports/' + draft.id + '/confirm', 'PATCH', { version: 1, payload: edited }), request('/reports/' + draft.id + '/confirm', 'PATCH', { version: 1, payload: another }, tokenB)]);
-  assert.deepEqual(results.map(r => r.status).sort(), [200, 409]);
-  const winner = results.find(r => r.status === 200).data;
-  const retry = await request('/reports/' + draft.id + '/confirm', 'PATCH', { version: 1, payload: winner.payload });
-  assert.equal(retry.status, 200); assert.equal(retry.data.version, 2);
-});
-test('confirmed documents cannot be edited or deleted, even directly in the database', async () => {
-  const change = payload(); change.form.cliente = 'Alterado';
-  assert.equal((await request('/reports/' + saved.id + '/confirm', 'PATCH', { version: 1, payload: change })).status, 409);
-  await assert.rejects(pool.query("UPDATE reports SET customer='Alterado' WHERE id=$1", [saved.id]), { code: '23514' });
-  await assert.rejects(pool.query('DELETE FROM reports WHERE id=$1', [saved.id]), { code: '23514' });
-  assert.equal((await request('/reports/' + saved.id)).data.customer, 'Hospital prueba');
-});
-test('invalid input, unknown records, pagination and safe errors', async () => {
-  const bad = payload(); bad.form.fecha = '2026-02-30'; assert.equal(payloadSchema.safeParse(bad).success, false);
-  assert.equal((await request('/reports', 'POST', { requestId: randomUUID(), payload: bad })).status, 400);
-  const secret = payload(); secret.signatures.tecnico = 'data:image/svg+xml,<script/>';
-  assert.equal((await request('/reports', 'POST', { requestId: randomUUID(), payload: secret })).status, 400);
-  assert.equal((await request('/reports/' + randomUUID())).status, 404);
-  assert.equal((await request('/reports?page=-1')).status, 400);
-  assert.equal((await request('/reports?page=2')).data.items.length, 0);
-  assert.equal((await request('/reports?from=2026-09-28&to=2026-09-27')).status, 400);
-});
-test('other users cannot list, read, duplicate, confirm or replay private reports', async () => {
-  assert.equal((await request('/reports', 'GET', null, tokenOther)).data.total, 0);
-  assert.equal((await request('/reports/' + saved.id, 'GET', null, tokenOther)).status, 404);
-  assert.equal((await request('/reports/' + saved.id + '/duplicate', 'POST', { requestId: randomUUID(), date: '2026-09-28' }, tokenOther)).status, 404);
-  assert.equal((await request('/reports/' + saved.id + '/confirm', 'PATCH', { version: 1, payload: saved.payload }, tokenOther)).status, 404);
-  const key = (await pool.query('SELECT request_id FROM reports WHERE id=$1', [saved.id])).rows[0].request_id;
-  assert.equal((await request('/reports', 'POST', { requestId: key, payload: saved.payload }, tokenOther)).status, 409);
-  assert.equal((await request('/reports/' + saved.id)).status, 200);
-});
-
-test('14 day retention hides expired content and physically deletes it without deleting newer copies', async () => {
-  const owner = (await pool.query('SELECT id FROM users WHERE username=$1', [config.username])).rows[0].id;
-  const oldId = randomUUID();
-  await pool.query(`INSERT INTO reports(id,customer,report_date,status,payload,payload_hash,request_id,request_hash,owner_id,created_at,expires_at)
-    VALUES($1,'Expired',current_date,'confirmed',$2,'test',$3,'test',$4,now()-interval '15 days',now()-interval '1 day')`, [oldId, payload(), randomUUID(), owner]);
-  const recentId = randomUUID();
-  await pool.query(`INSERT INTO reports(id,customer,report_date,status,payload,payload_hash,request_id,request_hash,owner_id,source_id)
-    VALUES($1,'Recent',current_date,'confirmed',$2,'test',$3,'test',$4,$5)`, [recentId, payload(), randomUUID(), owner, oldId]);
-  assert.equal((await request('/reports/' + oldId)).status, 404);
-  assert.equal((await request('/reports?q=Expired')).data.total, 0);
-  assert.equal((await request('/reports/' + oldId + '/duplicate', 'POST', { requestId: randomUUID(), date: '2026-09-28' })).status, 404);
-  assert.equal(await deleteExpiredReports(pool), 1);
-  assert.equal((await pool.query('SELECT id FROM reports WHERE id=$1', [oldId])).rowCount, 0);
-  assert.equal((await request('/reports/' + recentId)).status, 200);
-  assert.equal(await deleteExpiredReports(pool), 0);
-});
-
-test('data survives application restart; logout affects only its own session', async () => {
-  await new Promise(resolve => server.close(resolve));
-  server = createApp(pool, config).listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
-  base = 'http://127.0.0.1:' + server.address().port;
-  assert.equal((await request('/reports/' + saved.id, 'GET', null, tokenB)).data.number, saved.number);
-  assert.equal((await request('/auth/logout', 'POST')).status, 204);
-  assert.equal((await request('/reports')).status, 401);
-  assert.equal((await request('/reports', 'GET', null, tokenB)).status, 200);
-});
-test('CORS rejects unknown origins and expired sessions cannot read reports', async () => {
-  const denied = await fetch(base + '/api/reports', { headers: { Origin: 'https://untrusted.example', Authorization: 'Bearer ' + tokenB } });
-  assert.equal(denied.status, 403);
-  const allowed = await fetch(base + '/api/reports', { headers: { Origin: 'http://localhost:3000', Authorization: 'Bearer ' + tokenB } });
-  assert.equal(allowed.status, 200); assert.equal(allowed.headers.get('access-control-allow-origin'), 'http://localhost:3000');
-  await pool.query("UPDATE sessions SET expires_at=now() - interval '1 minute'");
-  assert.equal((await request('/reports', 'GET', null, tokenB)).status, 401);
-});
-test('database failures produce a safe error without connection strings', async () => {
-  const broken = createApp({ query: async () => { throw new Error('secret connection string'); } }, config).listen(0, '127.0.0.1');
-  await new Promise(resolve => broken.once('listening', resolve));
-  try {
-    const response = await fetch('http://127.0.0.1:' + broken.address().port + '/api/health');
-    assert.equal(response.status, 503); assert.equal((await response.text()).includes('secret'), false);
-  } finally { await new Promise(resolve => broken.close(resolve)); }
-});
-
-
 const pngSignature = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=';
+test('atomic persistent sequence belongs to each user across cities, clients and retries', async () => {
+  const documentId = randomUUID();
+  const repeated = await Promise.all(Array.from({ length: 5 }, () => request('/reports/number','POST',{documentId,prefix:'ts.uio.hvq.'})));
+  repeated.forEach(r => assert.equal(r.status,200));
+  assert.deepEqual(new Set(repeated.map(r=>r.data.number)),new Set(['TS.UIO.HVQ.001']));
+  const next = await signable(tokenA,'TS.GYE.OMNI.'); assert.equal(next.reportNumber,'TS.GYE.OMNI.002');
+  const other = await signable(tokenOther,'SU.CUE.CA.'); assert.equal(other.reportNumber,'SU.CUE.CA.001');
+  const simultaneous = await Promise.all(Array.from({length:6},()=>signable()));
+  assert.equal(new Set(simultaneous.map(p=>p.reportNumber)).size,6);
+  assert.deepEqual(simultaneous.map(p=>Number(p.reportNumber.split('.').at(-1))).sort((a,b)=>a-b),[3,4,5,6,7,8]);
+  const lower = { ...next, reportNumber: next.reportNumber.toLowerCase() };
+  const body={requestId:randomUUID(),payload:lower};
+  const saves=await Promise.all(Array.from({length:3},()=>request('/reports','POST',body)));
+  saves.forEach(r=>assert.equal(r.status,201,JSON.stringify(r.data)));
+  assert.equal(new Set(saves.map(r=>r.data.id)).size,1); saved=saves[0].data;
+  assert.equal(saved.number,'TS.GYE.OMNI.002'); assert.equal(saved.payload.reportNumber,saved.number);
+  assert.equal(saved.status,'draft');
+  assert.equal((await request('/reports','POST',{...body,payload:{...lower,brandId:'mancheno'}})).status,409);
+  assert.equal((await request('/reports','POST',{requestId:randomUUID(),payload:payload()})).status,409);
+});
+
+test('editing keeps record and number, persists every Results field and detects concurrent edits', async () => {
+  const original = await request('/reports/'+saved.id,'GET',null,tokenB);
+  const edited=structuredClone(original.data.payload);
+  Object.assign(edited.form,{horaInicio:'08:15',horaFinal:'10:45',firstTimeFix:'No',estadoFinal:'No habilitado',tecnico:'Responsable',observaciones:'Resultado persistente'});
+  const changedNumber={...edited,reportNumber:'TS.UIO.HVQ.999'};
+  assert.equal((await request('/reports/'+saved.id,'PATCH',{version:1,payload:changedNumber})).status,409);
+  const competing=structuredClone(edited);competing.form.observaciones='Otro dispositivo';
+  const results=await Promise.all([request('/reports/'+saved.id,'PATCH',{version:1,payload:edited}),request('/reports/'+saved.id,'PATCH',{version:1,payload:competing},tokenB)]);
+  assert.deepEqual(results.map(r=>r.status).sort(),[200,409]);
+  const winner=results.find(r=>r.status===200).data;
+  assert.equal(winner.id,saved.id);assert.equal(winner.number,saved.number);assert.equal(winner.status,'draft');
+  assert.deepEqual((await request('/reports/'+saved.id,'GET',null,tokenB)).data.payload.form,winner.payload.form);
+  assert.equal((await request('/reports/'+saved.id,'PATCH',{version:1,payload:winner.payload})).status,200);
+  assert.equal((await request('/reports?q='+encodeURIComponent("' OR 1=1 --"))).data.total,0);
+  assert.equal((await request('/reports?status=draft')).data.items.find(r=>r.id===saved.id).number,saved.number);
+});
+
+test('technical identity is authenticated and does not lock the report', async () => {
+  const content=await signable();await authorize(content,tokenA,'tecnico');
+  assert.equal(content.signatureMeta.tecnico.signerName,'Tests');
+  const created=await request('/reports','POST',{requestId:randomUUID(),payload:content});
+  assert.equal(created.status,201);assert.equal(created.data.status,'draft');
+  const edited=structuredClone(created.data.payload);edited.form.observaciones='Cambio después de firma técnica';
+  assert.equal((await request('/reports/'+created.data.id,'PATCH',{version:1,payload:edited})).status,400);
+  edited.signatures.tecnico='';edited.signatureMeta.tecnico=null;
+  assert.equal((await request('/reports/'+created.data.id,'PATCH',{version:1,payload:edited})).status,200);
+});
+
+test('client alone locks API and database; only one pending additional signature can be appended', async () => {
+  const content=await signable();await authorize(content,tokenA);
+  const created=await request('/reports','POST',{requestId:randomUUID(),payload:content});
+  assert.equal(created.status,201,JSON.stringify(created.data));const row=created.data;assert.equal(row.status,'confirmed');
+  const altered=structuredClone(row.payload);altered.form.observaciones='Alterado';
+  assert.equal((await request('/reports/'+row.id,'PATCH',{version:row.version,payload:altered})).status,409);
+  await assert.rejects(pool.query("UPDATE reports SET customer='Alterado' WHERE id=$1",[row.id]),{code:'23514'});
+  await assert.rejects(pool.query("UPDATE reports SET payload=jsonb_set(payload,'{form,observaciones}','\"Alterado\"') WHERE id=$1",[row.id]),{code:'23514'});
+  const withTechnical=structuredClone(row.payload);await authorize(withTechnical,tokenA,'tecnico');
+  assert.equal((await request('/reports/'+row.id,'PATCH',{version:1,payload:withTechnical})).status,409);
+  const extra=structuredClone(row.payload);await authorize(extra,tokenA,'adicional');
+  const appended=await request('/reports/'+row.id,'PATCH',{version:1,payload:extra});
+  assert.equal(appended.status,200,JSON.stringify(appended.data));assert.equal(appended.data.version,2);
+  assert.deepEqual(appended.data.payload.form,row.payload.form);
+  assert.deepEqual(appended.data.payload.signatureMeta.cliente,row.payload.signatureMeta.cliente);
+  assert.equal((await request('/reports/'+row.id,'PATCH',{version:1,payload:extra})).status,200);
+  const replacement=structuredClone(extra);await authorize(replacement,tokenA,'adicional');
+  assert.equal((await request('/reports/'+row.id,'PATCH',{version:2,payload:replacement})).status,409);
+  assert.equal((await request('/reports/'+row.id,'PATCH',{version:2,payload:row.payload})).status,409);
+});
+
+test('private history, disabled duplication, deletion and non-reusable numbers', async () => {
+  const content=await signable();const created=await request('/reports','POST',{requestId:randomUUID(),payload:content});
+  const id=created.data.id;
+  assert.equal((await request('/reports/'+id,'GET',null,tokenOther)).status,404);
+  assert.equal((await request('/reports/'+id,'PATCH',{version:1,payload:content},tokenOther)).status,404);
+  assert.equal((await request('/reports/'+id,'DELETE',null,tokenOther)).status,404);
+  assert.equal((await request('/reports/'+id+'/duplicate','POST',{requestId:randomUUID(),date:'2026-10-14'})).status,410);
+  await assert.rejects(pool.query('DELETE FROM reports WHERE id=$1',[id]),{code:'23514'});
+  assert.equal((await request('/reports/'+id,'DELETE')).status,204);
+  assert.equal((await request('/reports/'+id)).status,404);
+  assert.equal((await request('/reports/number','POST',{documentId:content.documentId,prefix:'TS.UIO.HVQ.'})).status,409);
+  const next=await signable();assert.ok(Number(next.reportNumber.split('.').at(-1))>Number(content.reportNumber.split('.').at(-1)));
+});
+
+test('saved results and counters survive restart; logout and CORS preserve isolation', async () => {
+  const before=(await request('/reports/'+saved.id)).data;
+  await new Promise(resolve=>server.close(resolve));
+  server=createApp(pool,config).listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));
+  base='http://127.0.0.1:'+server.address().port;
+  assert.deepEqual((await request('/reports/'+saved.id,'GET',null,tokenB)).data,before);
+  const next=await signable();assert.ok(Number(next.reportNumber.split('.').at(-1))>8);
+  const denied=await fetch(base+'/api/reports',{headers:{Origin:'https://untrusted.example',Authorization:'Bearer '+tokenB}});assert.equal(denied.status,403);
+  const temporary=(await request('/auth/login','POST',{user:config.username,password},'')).data.token;
+  assert.equal((await request('/auth/logout','POST',null,temporary)).status,204);
+  assert.equal((await request('/reports','GET',null,temporary)).status,401);
+  assert.equal((await request('/reports','GET',null,tokenB)).status,200);
+});
+
+test('validation rejects invalid dates and active content images without exposing infrastructure', async () => {
+  const content=await signable();content.form.fecha='2026-02-30';
+  assert.equal((await request('/reports','POST',{requestId:randomUUID(),payload:content})).status,400);
+  content.form.fecha='2026-10-14';content.signatures.cliente='data:image/svg+xml,<script/>';
+  assert.equal((await request('/reports','POST',{requestId:randomUUID(),payload:content})).status,400);
+  assert.equal((await request('/reports?page=-1')).status,400);
+  const broken=createApp({query:async()=>{throw new Error('secret connection string');}},config).listen(0,'127.0.0.1');
+  await new Promise(resolve=>broken.once('listening',resolve));
+  try { const response=await fetch('http://127.0.0.1:'+broken.address().port+'/api/health');assert.equal(response.status,503);assert.equal((await response.text()).includes('secret'),false); }
+  finally { await new Promise(resolve=>broken.close(resolve)); }
+});
 async function freshToken() {
   const login = await request('/auth/login', 'POST', { user: config.username, password }, '');
   return login.data.token;
 }
-const signable = () => ({ ...payload(), documentId: randomUUID(), signatureMeta: { tecnico: null, cliente: null } });
+async function signable(token = tokenA, prefix = 'TS.UIO.HVQ.') {
+  const content = { ...payload(), documentId: randomUUID(), signatureMeta: { tecnico: null, cliente: null, adicional: null } };
+  const response = await request('/reports/number','POST',{ documentId: content.documentId, prefix },token);
+  assert.equal(response.status,200,JSON.stringify(response.data)); content.reportNumber = response.data.number;
+  return content;
+}
 async function authorize(content, token, role = 'cliente') {
-  const validated = await request('/signers/validate', 'POST', { code: 'test-code', role, payload: content }, token);
+  const validated = role === 'tecnico' || role === 'adicional'
+    ? await request('/signers/manual','POST',{ role,payload:content,name:'Untrusted name' },token)
+    : await request('/signers/validate', 'POST', { code: 'test-code', role, payload: content }, token);
   assert.equal(validated.status, 200);
   const id = validated.data.authorizationId;
   assert.equal((await request('/signers/authorizations/' + id + '/accept', 'POST', { accepted: true }, token)).status, 200);
@@ -188,7 +194,7 @@ test('catalog is persistent and contains initial institutions', async () => {
 });
 
 test('signer validation, inactivity, mandatory acceptance, foreign owner and expired grants', async () => {
-  const token = await freshToken(), content = signable();
+  const token = await freshToken(), content = await signable(token);
   const bad = await request('/signers/validate', 'POST', { code: 'wrong', role: 'cliente', payload: content }, token);
   assert.equal(bad.status, 403); assert.equal(JSON.stringify(bad.data).includes('Test Signer'), false);
   await pool.query("UPDATE authorized_signers SET active=false WHERE external_key='test-signer'");
@@ -209,38 +215,9 @@ test('signer validation, inactivity, mandatory acceptance, foreign owner and exp
   assert.equal((await request(route + '/sign', 'POST', { signature: pngSignature, payload: content }, token)).status, 403);
 });
 
-test('authorized signatures retain historical identity, clear on duplication and reject reuse or changes', async () => {
-  const token = await freshToken(), content = signable();
-  await authorize(content, token, 'cliente'); await authorize(content, token, 'tecnico');
-  const forgedBeforeSave = structuredClone(content); forgedBeforeSave.signatureMeta.cliente.signerIdentification = 'FORGED';
-  assert.equal((await request('/reports', 'POST', { requestId: randomUUID(), payload: forgedBeforeSave }, token)).status, 400);
-  const swapped = structuredClone(content); swapped.signatureMeta.cliente = swapped.signatureMeta.tecnico;
-  assert.equal((await request('/reports', 'POST', { requestId: randomUUID(), payload: swapped }, token)).status, 400);
-  const body = { requestId: randomUUID(), payload: content };
-  const saved = await request('/reports', 'POST', body, token); assert.equal(saved.status, 201);
-  const retry = await request('/reports', 'POST', body, token); assert.equal(retry.data.id, saved.data.id);
-  const forged = structuredClone(content); forged.signatureMeta.cliente.signerName = 'Forged';
-  assert.equal((await request('/reports', 'POST', { requestId: randomUUID(), payload: forged }, token)).status, 400);
-  assert.equal((await request('/reports', 'POST', { requestId: randomUUID(), payload: content }, token)).status, 400);
-  await pool.query("UPDATE authorized_signers SET name='Updated identity',identification='DEMO-UPDATED' WHERE external_key='test-signer'");
-  const historic = await request('/reports/' + saved.data.id, 'GET', null, token);
-  assert.equal(historic.data.payload.signatureMeta.cliente.signerName, 'Test Signer');
-  assert.equal(historic.data.payload.signatureMeta.cliente.signerIdentification, 'PENDIENTE');
-  const copy = await request('/reports/' + saved.data.id + '/duplicate', 'POST', { requestId: randomUUID(), date: '2026-10-03' }, token);
-  assert.equal(copy.status, 201); assert.notEqual(copy.data.payload.documentId, content.documentId);
-  assert.deepEqual(copy.data.payload.signatures, { tecnico: '', cliente: '' });
-  assert.deepEqual(copy.data.payload.signatureMeta, { tecnico: null, cliente: null });
-  const bypass = structuredClone(copy.data.payload); bypass.signatures = content.signatures; bypass.signatureMeta = content.signatureMeta;
-  assert.equal((await request('/reports/' + copy.data.id + '/confirm', 'PATCH', { version: 1, payload: bypass }, token)).status, 400);
-  await authorize(copy.data.payload, token);
-  const changed = structuredClone(copy.data.payload); changed.form.observaciones = 'Changed after signing';
-  assert.equal((await request('/reports/' + copy.data.id + '/confirm', 'PATCH', { version: 1, payload: changed }, token)).status, 400);
-  const confirmed = await request('/reports/' + copy.data.id + '/confirm', 'PATCH', { version: 1, payload: copy.data.payload }, token);
-  assert.equal(confirmed.status, 200); assert.equal(confirmed.data.payload.signatureMeta.cliente.signerName, 'Updated identity');
-});
 
 test('unsigned reports remain supported but raw images without authorization cannot be saved', async () => {
-  const token = await freshToken(), content = signable();
+  const token = await freshToken(), content = await signable(token);
   content.signatures.cliente = pngSignature;
   assert.equal((await request('/reports', 'POST', { requestId: randomUUID(), payload: content }, token)).status, 400);
   content.signatures.cliente = '';
@@ -249,7 +226,7 @@ test('unsigned reports remain supported but raw images without authorization can
 
 
 test('signature retry is idempotent and backend failure does not enable signing', async () => {
-  const token = await freshToken(), content = signable();
+  const token = await freshToken(), content = await signable(token);
   const grant = await authorize(content, token);
   const repeat = await request('/signers/authorizations/' + grant + '/sign', 'POST', { signature: pngSignature, payload: content }, token);
   assert.equal(repeat.status, 200); assert.deepEqual(repeat.data.metadata, content.signatureMeta.cliente);
@@ -271,25 +248,9 @@ test('signature retry is idempotent and backend failure does not enable signing'
 });
 
 
-test('custom report numbers persist, reject collisions and can change on a duplicate draft', async () => {
-  const login = await request('/auth/login', 'POST', { user: config.username, password }, '');
-  const token = login.data.token;
-  const custom = { ...payload(), reportNumber: 'MANUAL-0042' };
-  const created = await request('/reports', 'POST', { requestId: randomUUID(), payload: custom }, token);
-  assert.equal(created.status, 201);
-  assert.equal(created.data.number, 'MANUAL-0042');
-  assert.equal((await request('/reports/' + created.data.id, 'GET', null, token)).data.number, 'MANUAL-0042');
-  assert.equal((await request('/reports', 'POST', { requestId: randomUUID(), payload: custom }, token)).status, 400);
-  const copy = await request('/reports/' + created.data.id + '/duplicate', 'POST', { requestId: randomUUID(), date: '2026-10-04' }, token);
-  assert.equal(copy.status, 201);
-  assert.notEqual(copy.data.number, custom.reportNumber);
-  const confirmed = await request('/reports/' + copy.data.id + '/confirm', 'PATCH', { version: copy.data.version, payload: { ...copy.data.payload, reportNumber: 'MANUAL-0043' } }, token);
-  assert.equal(confirmed.status, 200);
-  assert.equal(confirmed.data.number, 'MANUAL-0043');
-});
 
 test('manual optional technical and additional signatures persist without codes', async () => {
-  const token = await freshToken(), content = signable();
+  const token = await freshToken(), content = await signable(token);
   assert.equal((await request('/signers/settings', 'GET', null, token)).data.requireSignatureCode, false);
   for (const role of ['tecnico', 'adicional']) {
     const identity = role === 'tecnico' ? { name: 'Persona manual', identification: '1234567890', title: 'Ing.' } : {};
@@ -301,7 +262,7 @@ test('manual optional technical and additional signatures persist without codes'
     const signed = await request(route + '/sign', 'POST', { signature: pngSignature, payload: content }, token);
     assert.equal(signed.status, 200);
     assert.equal(signed.data.metadata.signerId, null);
-    assert.equal(signed.data.metadata.signerName, identity.name || '');
+    assert.equal(signed.data.metadata.signerName, role === 'tecnico' ? 'Tests' : '');
     content.signatures[role] = signed.data.signature;
     content.signatureMeta[role] = signed.data.metadata;
   }
@@ -312,7 +273,7 @@ test('manual optional technical and additional signatures persist without codes'
   assert.deepEqual((await request('/reports/' + result.data.id, 'GET', null, token)).data.payload, content);
   config.requireSignatureCode = true;
   try {
-    assert.equal((await request('/signers/manual', 'POST', { role: 'cliente', payload: signable() }, token)).status, 403);
+    assert.equal((await request('/signers/manual', 'POST', { role: 'cliente', payload: await signable(token) }, token)).status, 403);
   } finally { config.requireSignatureCode = false; }
 });
 
@@ -326,7 +287,7 @@ test('client signers are isolated by institution and the no-code flow stores an 
   assert.equal(clinicPeople.data.items.length, 1);
   assert.ok(omniPeople.data.items.every(person => !clinicPeople.data.items.some(other => other.id === person.id)));
 
-  const content = signable(); content.form.cliente = `${omni.name} (${omni.code})`;
+  const content = await signable(token); content.form.cliente = `${omni.name} (${omni.code})`;
   const signer = omniPeople.data.items[0];
   const input = { institutionId: omni.id, signerId: signer.id, identification: 'ID escrito manualmente, sin formato nacional', payload: content };
   const crossInstitution = await request('/signers/authorize-client', 'POST', { ...input, institutionId: clinic.id }, token);
@@ -359,7 +320,7 @@ test('a new responsible can be added permanently to its institution and signed w
   }, token);
   assert.equal(created.status, 201);
   assert.equal(created.data.name, 'Persona Nueva');
-  const content = signable();
+  const content = await signable(token);
   content.form.cliente = `${institution.name} (${institution.code})`;
   const deniedByFlag = config.requireSignatureCode;
   config.requireSignatureCode = true;
@@ -388,7 +349,7 @@ test('empty institutions, optional document, foreign/inactive signers and client
   const institution = catalog.find(i => i.code === 'CM');
   assert.deepEqual((await request(`/institutions/${institution.id}/signers`, 'GET', null, token)).data.items, []);
   const person = (await request(`/institutions/${institution.id}/signers`, 'POST', { firstName: 'Sin', lastName: 'Documento' }, token)).data;
-  const content = signable(); content.form.cliente = institution.code;
+  const content = await signable(token); content.form.cliente = institution.code;
   const body = { institutionId: institution.id, signerId: person.id, payload: content };
   assert.equal((await request('/signers/manual', 'POST', { role: 'cliente', payload: content }, token)).status, 400);
   const other = catalog.find(i => i.code === 'OMNI');
@@ -409,21 +370,4 @@ test('empty institutions, optional document, foreign/inactive signers and client
   assert.equal((await request('/reports', 'POST', { requestId: randomUUID(), payload: content }, token)).status, 201);
   await pool.query('UPDATE authorized_signers SET active=false WHERE id=$1', [person.id]);
   assert.equal((await request('/signers/authorize-client', 'POST', body, token)).status, 409);
-});
-
-test('owners can delete saved signed reports and drafts without affecting other users or copies', async () => {
-  const token = await freshToken(), content = signable();
-  await authorize(content, token, 'tecnico');
-  const saved = (await request('/reports', 'POST', { requestId: randomUUID(), payload: content }, token)).data;
-  const copy = (await request('/reports/' + saved.id + '/duplicate', 'POST', { requestId: randomUUID(), date: '2026-10-06' }, token)).data;
-  const outsider = (await request('/auth/login', 'POST', { user: 'second-user', password }, '')).data.token;
-  assert.equal((await request('/reports/' + saved.id, 'DELETE', null, '')).status, 401);
-  assert.equal((await request('/reports/' + saved.id, 'DELETE', null, outsider)).status, 404);
-  assert.equal((await request('/reports/' + saved.id, 'DELETE', null, token)).status, 204);
-  assert.equal((await request('/reports/' + saved.id, 'GET', null, token)).status, 404);
-  assert.equal((await pool.query('SELECT id FROM signature_authorizations WHERE report_id=$1', [saved.id])).rowCount, 0);
-  assert.equal((await request('/reports/' + saved.id, 'DELETE', null, token)).status, 404);
-  assert.equal((await request('/reports/' + copy.id, 'GET', null, token)).status, 200);
-  assert.equal((await request('/reports/' + copy.id, 'DELETE', null, token)).status, 204);
-  assert.equal((await request('/reports/not-a-uuid', 'DELETE', null, token)).status, 400);
 });

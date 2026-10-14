@@ -245,17 +245,17 @@
     `;
   }
 
-  function SignatureAuthorization({ label, role, payload, onSave, onClose }) {
+  function SignatureAuthorization({ label, role, payload, user, onSave, onClose }) {
     const dialogRef = useRef(null);
     const active = useRef(true);
     const requestRef = useRef(null);
     const busyRef = useRef(false);
     const [phase, setPhase] = useState('loading');
     const [code, setCode] = useState('');
-    const [identity, setIdentity] = useState({ name: '', identification: '', title: '' });
+    const [identity, setIdentity] = useState({ name: role === 'tecnico' ? user.nombre : '', identification: '', title: '' });
     useEffect(() => {
       ReportAPI.request('/signers/settings').then(settings => {
-        if (active.current) setPhase(settings.requireSignatureCode ? 'code' : 'manual');
+        if (active.current) setPhase(settings.requireSignatureCode && role !== 'tecnico' ? 'code' : 'manual');
       }).catch(err => { if (active.current) setError(err.message); });
     }, []);
     const [grant, setGrant] = useState(null);
@@ -302,10 +302,10 @@
         <h2 id="authorization-title">${phase === 'code' ? 'Autorización de firma' : 'Confirmación de firma'}</h2>
         <p>${label}</p>
         ${phase === 'loading' && html`<p>Cargando…</p>`}
-        ${phase === 'manual' && html`<p>Datos opcionales. Puedes dejarlos en blanco.</p>
+        ${phase === 'manual' && html`<p>${role === 'tecnico' ? 'El nombre corresponde a tu sesión. Cédula y cargo son opcionales.' : 'Datos opcionales. Puedes dejarlos en blanco.'}</p>
           ${[['name', 'Nombres y apellidos'], ['identification', 'Cédula / documento'], ['title', 'Título / cargo']].map(([field, text]) => html`
             <label className="authorization-code">${text}
-              <input type="text" maxLength="500" value=${identity[field]} disabled=${loading}
+              <input type="text" maxLength="500" value=${identity[field]} disabled=${loading} readOnly=${role === 'tecnico' && field === 'name'}
                 onInput=${event => setIdentity(previous => ({ ...previous, [field]: event.target.value }))} /></label>`)}
         `}
         ${phase === 'code' && html`<label className="authorization-code">Ingrese su clave personal para continuar.
@@ -597,9 +597,10 @@
     const customer = normalizeReportPart(form.cliente);
     const institution = institutions.find(item => [item.name, item.code, `${item.name} (${item.code})`].some(value => normalizeReportPart(value) === customer));
     const unit = normalizeReportPart(form.unidadSoporte).replace(/[^a-z0-9]/g, '');
-    return [unit, cityCode, normalizeReportPart(institution?.code)].join('.') + '.';
+    return ([unit, cityCode, normalizeReportPart(institution?.code)].join('.') + '.').toUpperCase();
   }
 
+  const stableValue = value => Array.isArray(value) ? value.map(stableValue) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key => [key, stableValue(value[key])])) : value;
   function App() {
     const [brandId, setBrandId] = useState(null);
     const [choosingBrand, setChoosingBrand] = useState(true);
@@ -611,6 +612,8 @@
     const [loginError, setLoginError] = useState('');
     const [reportNumber, setReportNumber] = useState('');
     const numberingFields = useRef('');
+    const [numberReserved, setNumberReserved] = useState(false);
+    const [showAdditional, setShowAdditional] = useState(false);
     const [form, setForm] = useState(createInitialForm);
     const [equipoRows, setEquipoRows] = useState(createInitialEquipoRows);
     const [repuestoRows, setRepuestoRows] = useState(createInitialRepuestoRows);
@@ -636,13 +639,12 @@
     const loginBusy = useRef(false);
     const loggedInBefore = useRef(false);
     const lastUsername = useRef(null);
-    const duplicateRequest = useRef(null);
     useEffect(() => {
       const key = JSON.stringify([form.unidadSoporte, form.ciudad, form.cliente, institutions.map(i => i.code)]);
       if (numberingFields.current === key) return;
       const previousFields = numberingFields.current ? JSON.parse(numberingFields.current) : [];
       numberingFields.current = key;
-      if (readOnly || busy || pendingSave) return;
+      if (readOnly || busy || pendingSave || record || numberReserved) return;
       const prefix = reportPrefix(form, institutions);
       setReportNumber(previous => {
         const tail = previous.split('.').at(-1);
@@ -652,7 +654,7 @@
         const nextPrefix = parts.join('.');
         return nextPrefix === '...' && !suffix ? '' : nextPrefix + suffix;
       });
-    }, [form.unidadSoporte, form.ciudad, form.cliente, institutions, readOnly, busy, pendingSave]);
+    }, [form.unidadSoporte, form.ciudad, form.cliente, institutions, readOnly, busy, pendingSave, record, numberReserved]);
     const snapshot = () => ({ schemaVersion: 1, reportNumber, brandId: brand.id, form, equipoRows, repuestoRows, repuestosEnabled, documentId, signatures, signatureMeta });
     const contentKey = JSON.stringify({ reportNumber, brandId: brand.id, form, equipoRows, repuestoRows, repuestosEnabled, documentId });
     useEffect(() => {
@@ -673,7 +675,7 @@
     }, [currentUser]);
     const normalizeInstitution = value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLocaleLowerCase();
     const selectedInstitution = institutions.find(item => [item.name, item.code, item.name + ' (' + item.code + ')'].some(value => normalizeInstitution(value) === normalizeInstitution(form.cliente)));
-    const hasUnsaved = !readOnly && ((reportNumber && reportNumber !== reportPrefix(form, institutions)) || pendingSave || Object.entries(form).some(([key, value]) => key !== 'fecha' && !(key === 'unidadSoporte' && value === currentUser?.siglas) && (Array.isArray(value) ? value.length : value)) ||
+    const hasUnsaved = record ? JSON.stringify(stableValue(snapshot())) !== JSON.stringify(stableValue(record.payload)) : !readOnly && ((reportNumber && reportNumber !== reportPrefix(form, institutions)) || pendingSave || Object.entries(form).some(([key, value]) => key !== 'fecha' && !(key === 'unidadSoporte' && value === currentUser?.siglas) && (Array.isArray(value) ? value.length : value)) ||
       equipoRows.some(row => Object.values(row).some(Boolean)) || repuestoRows.some(row => Object.values(row).some(Boolean)) || Object.values(signatures).some(Boolean));
 
     useEffect(() => {
@@ -688,7 +690,7 @@
       return () => document.body.classList.remove('authenticated');
     }, [currentUser]);
     useLayoutEffect(() => {
-      document.body.classList.toggle('printable-report', !!currentUser && record?.status === 'confirmed');
+      document.body.classList.toggle('printable-report', !!currentUser && !!record);
       return () => document.body.classList.remove('printable-report');
     }, [currentUser, record]);
     useEffect(() => {
@@ -714,7 +716,7 @@
     function applyRecord(saved, editable = false) {
       const data = saved.payload;
       numberingFields.current = JSON.stringify([data.form.unidadSoporte, data.form.ciudad, data.form.cliente, institutions.map(i => i.code)]);
-      setRecord(saved); setReportNumber(editable && !data.reportNumber ? reportPrefix(data.form, institutions) : saved.number); setBrandId(data.brandId); setChoosingBrand(false);
+      setRecord(saved); setNumberReserved(true); setShowAdditional(Boolean(data.signatures.adicional)); setReportNumber(saved.number); setBrandId(data.brandId); setChoosingBrand(false);
       setForm(data.form); setEquipoRows(data.equipoRows); setRepuestoRows(data.repuestoRows);
       const nextDocumentId = data.documentId || crypto.randomUUID();
       setDocumentId(nextDocumentId);
@@ -732,22 +734,42 @@
       await Promise.all(Array.from(sheetRef.current.querySelectorAll('img')).map(img => img.decode().catch(() => {})));
       downloadPDF(saved);
     }
+    async function ensureNumber() {
+      if (record || numberReserved) return reportNumber;
+      const prefix = reportNumber.replace(/[0-9]+$/, '').toUpperCase();
+      if (!/^[A-Z0-9]+\.[A-Z0-9]+\.[A-Z0-9]+\.$/.test(prefix)) throw new Error('Completa unidad, ciudad y cliente para asignar el número del reporte.');
+      const result = await ReportAPI.request('/reports/number', { method: 'POST', body: { documentId, prefix } });
+      ReactDOM.flushSync(() => { setReportNumber(result.number); setNumberReserved(true); });
+      return result.number;
+    }
+    async function beginSignature(key) {
+      if (busyRef.current) return;
+      if (readOnly && (record?.status !== 'confirmed' || key !== 'adicional' || record.payload.signatures.adicional)) return;
+      if (!form.cliente.trim() || !form.fecha) { setError('Completa cliente y fecha antes de firmar.'); return; }
+      if (key === 'cliente' && (requireSignatureCode === null || (!requireSignatureCode && !selectedInstitution))) {
+        setError('Selecciona una institución del catálogo antes de firmar como cliente.'); return;
+      }
+      busyRef.current = true; setBusy(true); setError('');
+      try { await ensureNumber(); setSignatureTarget(key); }
+      catch (err) { setError(err.message); }
+      finally { busyRef.current = false; setBusy(false); }
+    }
     async function saveReport(andPrint = false) {
       if (busyRef.current) return;
       busyRef.current = true; setBusy(true); setError(''); setMessage('');
       try {
-        if (record?.status === 'confirmed') { if (andPrint) await printReady(); return; }
-        if (readOnly) throw new Error('Abre el borrador con “Continuar borrador” antes de confirmarlo.');
-        if (reportNumber.endsWith('.') || reportNumber.includes('..')) throw new Error('Completa las siglas y el número manual del reporte antes de guardar.');
+        if (record?.status === 'confirmed' && signatures.adicional === record.payload.signatures.adicional) { if (andPrint) await printReady(); return; }
+        if (readOnly && record?.status !== 'confirmed') { if (andPrint) await printReady(); else throw new Error('Abre el reporte con Editar desde el historial.'); return; }
         if (!form.cliente.trim()) throw new Error('Ingresa el hospital o cliente antes de guardar.');
         if (!form.fecha) throw new Error('Ingresa la fecha del reporte.');
-        const operation = pendingSave || { requestId: crypto.randomUUID(), payload: snapshot() };
+        const number = await ensureNumber();
+        const operation = pendingSave || { requestId: crypto.randomUUID(), payload: { ...snapshot(), reportNumber: number } };
         setPendingSave(operation);
         const saved = record
-          ? await ReportAPI.request('/reports/' + record.id + '/confirm', { method: 'PATCH', body: { version: record.version, payload: operation.payload } })
+          ? await ReportAPI.request('/reports/' + record.id, { method: 'PATCH', body: { version: record.version, payload: operation.payload } })
           : await ReportAPI.request('/reports', { method: 'POST', body: operation });
-        ReactDOM.flushSync(() => applyRecord(saved));
-        setMessage('Reporte ' + saved.number + ' guardado y confirmado en tu historial.');
+        ReactDOM.flushSync(() => applyRecord(saved, true));
+        setMessage('Reporte ' + saved.number + (saved.status === 'confirmed' ? ' aprobado y protegido en tu historial.' : ' guardado. Puedes seguir editándolo hasta guardar la firma del cliente.'));
         if (andPrint) await printReady(saved);
       } catch (err) {
         if (err.status === 400 || err.status === 413) setPendingSave(null);
@@ -764,19 +786,6 @@
       } catch (err) { setError(err.message); setHistoryOpen(false); }
       finally { busyRef.current = false; setBusy(false); }
     }
-    async function duplicateReport(id) {
-      if (busyRef.current || !allowReplace()) return;
-      busyRef.current = true; setBusy(true); setError('');
-      try {
-        if (duplicateRequest.current?.id !== id) duplicateRequest.current = { id, requestId: crypto.randomUUID(), date: getToday() };
-        const { requestId, date } = duplicateRequest.current;
-        const saved = await ReportAPI.request('/reports/' + id + '/duplicate', { method: 'POST', body: { requestId, date } });
-        applyRecord(saved, true); setHistoryOpen(false); duplicateRequest.current = null;
-        setMessage('Copia ' + saved.number + ' creada como borrador. La copia requiere nuevas claves, aceptación y firmas. Revisa los horarios y resultados de la nueva visita.');
-      } catch (err) { setError(err.message); setHistoryOpen(false); }
-      finally { busyRef.current = false; setBusy(false); }
-    }
-
     function updateField(field) {
       return (event) => {
         const value = event.target.value;
@@ -813,7 +822,7 @@
     }
 
     function clearForm(user = currentUser) {
-      numberingFields.current = '';
+      numberingFields.current = ''; setNumberReserved(false); setShowAdditional(false);
       setDocumentId(crypto.randomUUID()); signedContent.current = null;
       setSignatureMeta({ tecnico: null, cliente: null, adicional: null });
       setRecord(null); setReadOnly(false); setPendingSave(null); setError(''); setMessage('');
@@ -854,12 +863,10 @@
     }
 
     function buildFileName(saved) {
-      const values = saved?.payload.form || form;
-      const num = saved?.number || reportNumber.trim() || 'reporte';
-      const date = values.fecha || getToday();
-      const cliente = (values.cliente || 'cliente').trim().replace(/[<>:"/\\|?*\s]+/g, '_');
-      const user = currentUser ? currentUser.user : 'usuario';
-      return num + '_' + cliente + '_' + user + '_' + date + '.pdf';
+      const number = saved?.number;
+      if (!number) throw new Error('Guarda el reporte antes de descargarlo.');
+      const safeNumber = number.toUpperCase().replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/[. ]+$/, '');
+      return (/^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)/.test(safeNumber) ? '_' : '') + safeNumber + '.pdf';
     }
 
     function downloadPDF(saved) {
@@ -948,11 +955,12 @@
                 id="numeroReporte"
                 type="text"
                 value=${reportNumber}
-                onInput=${event => setReportNumber(event.target.value)}
+                onInput=${event => setReportNumber(event.target.value.toUpperCase())}
                 maxLength="60"
-                readOnly=${readOnly || busy}
-                placeholder="unidad.ciudad.cliente.número"
+                readOnly=${readOnly || busy || numberReserved}
+                placeholder="UNIDAD.CIUDAD.CLIENTE."
               />
+              ${!numberReserved && html`<small className="signature-controls">Consecutivo automático al guardar o firmar.</small>`}
             </div>
           </div>
 
@@ -968,11 +976,10 @@
               <button className="secondary" disabled=${busy || !!pendingSave || readOnly} type="button" onClick=${() => setChoosingBrand(true)}>Cambiar logo</button>
               <button className="secondary" disabled=${busy} type="button" onClick=${() => setHistoryOpen(true)}>Historial de reportes</button>
               <button className="secondary" disabled=${busy} id="logoutBtn" type="button" onClick=${handleLogout}>Salir</button>
-              ${!readOnly && html`<button disabled=${busy} type="button" onClick=${() => saveReport(false)}>${busy ? 'Guardando…' : pendingSave ? 'Reintentar guardado' : 'Guardar reporte'}</button>`}
-              <button id="pdfBtn" type="button" disabled=${pdfGenerating || busy || (readOnly && record?.status !== 'confirmed')} onClick=${() => saveReport(true)}>
+              ${(!readOnly || (record?.status === 'confirmed' && signatures.adicional && !record.payload.signatures.adicional)) && html`<button disabled=${busy} type="button" onClick=${() => saveReport(false)}>${busy ? 'Guardando…' : pendingSave ? 'Reintentar guardado' : 'Guardar reporte'}</button>`}
+              <button id="pdfBtn" type="button" disabled=${pdfGenerating || busy} onClick=${() => saveReport(true)}>
                 ${pdfGenerating ? 'Generando...' : record?.status === 'confirmed' ? 'Descargar PDF' : 'Guardar e imprimir'}
               </button>
-              ${record && html`<button className="secondary" disabled=${busy} type="button" onClick=${() => duplicateReport(record.id)}>Duplicar reporte</button>`}
               <button className="secondary" disabled=${busy} id="clearBtn" type="button" onClick=${() => { if (allowReplace()) clearForm(); }}>Nuevo reporte</button>
             </div>
           </div>
@@ -980,7 +987,7 @@
           <div className="report-notices">
             ${message && html`<p role="status">${message}</p>`}
             ${error && html`<p role="alert" className="report-error">${error}</p>`}
-            ${readOnly && html`<p>Vista protegida · ${record?.status === 'confirmed' ? 'Confirmado' : 'Borrador'}. Para reutilizar los datos, selecciona Duplicar reporte.</p>`}
+            ${readOnly && html`<p>Vista protegida · ${record?.status === 'confirmed' ? 'Confirmado' : 'Borrador'}. ${record?.status === 'confirmed' ? 'El cliente aprobó este reporte. Solo puedes añadir la firma adicional pendiente.' : 'Para modificarlo, selecciona Editar en el historial.'}</p>`}
             ${pendingSave && !busy && html`<p>El guardado aún no está confirmado. Usa Reintentar guardado: no creará un duplicado. Si necesitas corregir datos, revisa primero el historial.</p>`}
           </div>
           <fieldset className="content report-fields" id="report" disabled=${readOnly || busy || !!pendingSave}>
@@ -1348,22 +1355,17 @@
               </div>
             </div>
 
-            <div className="signature">
-              ${[['tecnico', 'Servicio técnico'], ['cliente', 'Cliente'], ['adicional', 'Firma adicional (opcional)']].map(([key, label]) => html`
+          </fieldset>
+          <div className="content">
+            ${!showAdditional && !signatures.adicional && (!readOnly || record?.status === 'confirmed') && html`<button type="button" className="secondary signature-controls" disabled=${busy || !!pendingSave} onClick=${() => setShowAdditional(true)}>Añadir firma adicional</button>`}
+            <div className=${'signature' + (signatures.adicional ? ' has-additional-signature' : '')}>
+              ${[['tecnico', 'Servicio técnico'], ['cliente', 'Cliente'], ...((showAdditional || signatures.adicional) ? [['adicional', 'Firma adicional (opcional)']] : [])].map(([key, label]) => html`
                 <div key=${key} className=${'signature-slot' + (key === 'adicional' && !signatures[key] ? ' empty-additional-signature' : '')}>
                   <div className="signature-controls">
-                    <button type="button" className="secondary" onClick=${() => {
-                      if (key === 'cliente' && requireSignatureCode === null) {
-                        setError('Espera a que cargue el catálogo de instituciones. Si falló, vuelve a iniciar sesión.'); return;
-                      }
-                      if (key === 'cliente' && !requireSignatureCode && !selectedInstitution) {
-                        setError('Selecciona una institución del catálogo antes de firmar como cliente.'); return;
-                      }
-                      setError(''); setSignatureTarget(key);
-                    }}>
+                    <button type="button" className="secondary" disabled=${busy || !!pendingSave || (readOnly && (key !== 'adicional' || record?.status !== 'confirmed' || !!record.payload.signatures.adicional))} onClick=${() => beginSignature(key)}>
                       ${signatures[key] ? 'Editar firma' : 'Firmar / cargar imagen'} — ${label}
                     </button>
-                    ${signatures[key] && html`<button type="button" className="secondary"
+                    ${signatures[key] && (!readOnly || (key === 'adicional' && !record?.payload.signatures.adicional)) && html`<button type="button" disabled=${busy || !!pendingSave} className="secondary"
                       onClick=${() => { setSignatures(prev => ({ ...prev, [key]: '' })); setSignatureMeta(prev => ({ ...prev, [key]: null })); }}>Quitar firma</button>`}
                   </div>
                   <div className="signature-space">
@@ -1378,9 +1380,9 @@
                 </div>
               `)}
             </div>
-          </fieldset>
+          </div>
         </div>
-        ${currentUser && historyOpen && html`<${ReportHistory} busy=${busy} onClose=${() => setHistoryOpen(false)} onOpen=${openReport} onDuplicate=${duplicateReport} onDeleted=${id => { if (record?.id === id) clearForm(); }} />`}
+        ${currentUser && historyOpen && html`<${ReportHistory} busy=${busy} onClose=${() => setHistoryOpen(false)} onOpen=${openReport} onDeleted=${id => { if (record?.id === id) clearForm(); }} />`}
         ${currentUser && choosingBrand && html`<${BrandPicker} selected=${brandId}
           onClose=${() => setChoosingBrand(false)}
           onSelect=${id => { setBrandId(id); setChoosingBrand(false); }} />`}
@@ -1395,7 +1397,7 @@
           }} />`}
         ${currentUser && signatureTarget && (signatureTarget !== 'cliente' || requireSignatureCode) && html`<${SignatureAuthorization}
           label=${signatureTarget === 'tecnico' ? 'servicio técnico' : signatureTarget === 'cliente' ? 'cliente' : 'firma adicional'}
-          role=${signatureTarget} payload=${snapshot()}
+          role=${signatureTarget} payload=${snapshot()} user=${currentUser}
           onClose=${() => setSignatureTarget(null)}
           onSave=${(image, metadata) => {
             signedContent.current = contentKey;
