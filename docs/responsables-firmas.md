@@ -41,6 +41,20 @@ Se usan los códigos entre paréntesis del Excel. Incarvasc - Semedic no trae c�
 
 ## API y seguridad
 
+### Responsables confirmados para Quito
+
+La migración `1791936100000_quito_client_responsibles.cjs` incorpora estas asociaciones en la selección de firma del cliente:
+
+| Institución | Código | Responsable |
+|---|---|---|
+| Hospital de los Valles | HDLV | Ing. Jennifer Chicango |
+| Hospital Vozandes de Quito | HVQ | Ing. Diego Arias; Dr. Milton Chango |
+| Clínica Hemovida | HV | Dr. Javier Vinueza |
+
+Se reutilizan los registros existentes, conservando sus identificadores, documentos y credenciales. Las identidades guardadas en firmas históricas no se modifican. Estas asociaciones corresponden a la firma del cliente; el técnico sigue identificado por su sesión. HDLV no debe confundirse con HLV (Hospital Luis Vernaza).
+
+Validación de esta incorporación: 20 pruebas aprobadas y comprobación de las tres listas en navegador real, sin errores JavaScript.
+
 - `GET /api/institutions`: incluye `requireSignatureCode` para elegir el flujo.
 - `GET /api/institutions/:id/signers`: lista de responsables activos de esa institución; no expone documentos ni claves.
 - `POST /api/institutions/:id/signers`: crea un responsable asociado; exige autenticación y limita altas.

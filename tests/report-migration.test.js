@@ -8,6 +8,33 @@ import { migrate } from '../server/migrate.js';
 import { reserveNumber } from '../server/report-numbering.js';
 import { deleteExpiredReports } from '../server/retention.js';
 
+test('Quito assignments reuse existing identities and preserve credentials and signature snapshots', async () => {
+  const schema='responsibles_'+randomBytes(8).toString('hex');
+  const admin=new pg.Pool({connectionString:process.env.TEST_DATABASE_URL});let pool;
+  try {
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const url=new URL(process.env.TEST_DATABASE_URL);url.searchParams.set('options',`-c search_path=${schema},public`);
+    await runner({databaseUrl:url.toString(),dir:fileURLToPath(new URL('../server/migrations',import.meta.url)),schema,migrationsTable:'pgmigrations',direction:'up',count:9,log:()=>{}});
+    pool=new pg.Pool({connectionString:url.toString()});
+    const jennifer=(await pool.query(`INSERT INTO authorized_signers(external_key,name,identification,title,code_hash,code_lookup)
+      VALUES('jennifer-chicango','Jennifer Chicango','DOCUMENTO EXISTENTE','Ing.','existing-hash','existing-lookup') RETURNING id`)).rows[0].id;
+    const diego=(await pool.query(`INSERT INTO authorized_signers(external_key,name,institution_id,code_hash,code_lookup)
+      SELECT 'manual-existing','Diego Arias',id,NULL,NULL FROM institutions WHERE code='HVQ' RETURNING id`)).rows[0].id;
+    const owner=(await pool.query("INSERT INTO users(username,full_name,support_initials,password_hash) VALUES('historic','Historic','HI','test') RETURNING id")).rows[0].id;
+    const grant=(await pool.query(`INSERT INTO signature_authorizations(owner_id,signer_id,credential_version,document_id,role,content_hash,signer_snapshot)
+      VALUES($1,$2,'historical',$3,'cliente','historical-content','{"signerName":"Identidad histórica","signerTitle":"Ing."}') RETURNING *`,[owner,jennifer,randomUUID()])).rows[0];
+    await migrate(url.toString(),schema);await migrate(url.toString(),schema);
+    const existing=(await pool.query('SELECT * FROM authorized_signers WHERE id=$1',[jennifer])).rows[0];
+    assert.equal(existing.code_hash,'existing-hash');assert.equal(existing.code_lookup,'existing-lookup');assert.equal(existing.identification,'DOCUMENTO EXISTENTE');
+    assert.deepEqual((await pool.query('SELECT * FROM signature_authorizations WHERE id=$1',[grant.id])).rows[0],grant);
+    const mapped=(await pool.query(`SELECT s.id,s.name,s.treatment,i.code FROM authorized_signers s JOIN institutions i ON i.id=s.institution_id
+      WHERE i.code IN ('HDLV','HVQ','HV') ORDER BY s.name`)).rows;
+    assert.equal(mapped.length,4);assert.equal(mapped.find(s=>s.name==='Diego Arias').id,diego);
+    assert.deepEqual(mapped.map(s=>[s.name,s.treatment,s.code]),[
+      ['Diego Arias','Ing.','HVQ'],['Javier Vinueza','Dr.','HV'],['Jennifer Chicango','Ing.','HDLV'],['Milton Chango','Dr.','HVQ']]);
+  } finally { await pool?.end();await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);await admin.end(); }
+});
+
 test('normalization collision aborts migration without changing historical data', async () => {
   const schema='collision_'+randomBytes(8).toString('hex');
   const admin=new pg.Pool({connectionString:process.env.TEST_DATABASE_URL});let pool;

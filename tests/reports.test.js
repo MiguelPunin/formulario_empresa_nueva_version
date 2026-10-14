@@ -193,6 +193,21 @@ test('catalog is persistent and contains initial institutions', async () => {
   assert.deepEqual(result.data.items.map(i => i.code).sort(), ['CA','CM','CSJ','CU','HA','HAP','HDEC','HDLV','HLV','HMS','HRG','HSF','HV','HVQ','INC','KPOLI','OMNI','UEES']);
 });
 
+test('Quito client signatures list the correct responsible for each hospital', async () => {
+  const catalog=(await request('/institutions')).data.items;
+  const expected={HDLV:['Ing. Jennifer Chicango'],HVQ:['Ing. Diego Arias','Dr. Milton Chango'],HV:['Dr. Javier Vinueza']};
+  for (const [code,names] of Object.entries(expected)) {
+    const institution=catalog.find(i=>i.code===code);
+    const people=(await request(`/institutions/${institution.id}/signers`)).data.items;
+    assert.deepEqual(people.map(p=>`${p.treatment} ${p.name}`).sort(),names.sort());
+    const content=await signable();content.form.cliente=institution.name;
+    const grant=await request('/signers/authorize-client','POST',{institutionId:institution.id,signerId:people[0].id,payload:content});
+    assert.equal(grant.status,200,JSON.stringify(grant.data));
+    assert.equal(grant.data.signer.signerName,people[0].name);
+    assert.equal(grant.data.signer.signerInstitutionId,institution.id);
+  }
+});
+
 test('signer validation, inactivity, mandatory acceptance, foreign owner and expired grants', async () => {
   const token = await freshToken(), content = await signable(token);
   const bad = await request('/signers/validate', 'POST', { code: 'wrong', role: 'cliente', payload: content }, token);
