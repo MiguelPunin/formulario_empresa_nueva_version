@@ -590,14 +590,14 @@
     ['Manta', 'mec'], ['Loja', 'loh'], ['Francisco de Orellana', 'occ'],
   ];
   const normalizeReportPart = value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
-  function reportPrefix(form, institutions) {
+  function reportPrefix(form, institutions, currentUser) {
     const cityName = normalizeReportPart(form.ciudad);
     const city = REPORT_CITIES.find(([name, code]) => normalizeReportPart(name) === cityName || code === cityName);
     const cityCode = city?.[1] || (cityName === 'el coca' || cityName === 'coca' ? 'occ' : '');
     const customer = normalizeReportPart(form.cliente);
     const institution = institutions.find(item => [item.name, item.code, `${item.name} (${item.code})`].some(value => normalizeReportPart(value) === customer));
-    const unit = normalizeReportPart(form.unidadSoporte).replace(/[^a-z0-9]/g, '');
-    return ([unit, cityCode, normalizeReportPart(institution?.code)].join('.') + '.').toUpperCase();
+    const unit = normalizeReportPart(currentUser?.siglas).replace(/[^a-z0-9]/g, '');
+    return ([unit, cityCode, normalizeReportPart(institution?.code)].join('-') + '-').toUpperCase();
   }
 
   const stableValue = value => Array.isArray(value) ? value.map(stableValue) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key => [key, stableValue(value[key])])) : value;
@@ -640,21 +640,21 @@
     const loggedInBefore = useRef(false);
     const lastUsername = useRef(null);
     useEffect(() => {
-      const key = JSON.stringify([form.unidadSoporte, form.ciudad, form.cliente, institutions.map(i => i.code)]);
+      const key = JSON.stringify([currentUser?.siglas, form.ciudad, form.cliente, institutions.map(i => i.code)]);
       if (numberingFields.current === key) return;
       const previousFields = numberingFields.current ? JSON.parse(numberingFields.current) : [];
       numberingFields.current = key;
       if (readOnly || busy || pendingSave || record || numberReserved) return;
-      const prefix = reportPrefix(form, institutions);
+      const prefix = reportPrefix(form, institutions, currentUser);
       setReportNumber(previous => {
-        const tail = previous.split('.').at(-1);
+        const tail = previous.split('-').at(-1);
         const suffix = /^\d+$/.test(tail) ? tail : '';
-        const parts = prefix.split('.');
-        if (!parts[1] && previousFields[1] === form.ciudad) parts[1] = previous.split('.')[1] || '';
-        const nextPrefix = parts.join('.');
-        return nextPrefix === '...' && !suffix ? '' : nextPrefix + suffix;
+        const parts = prefix.split('-');
+        if (!parts[1] && previousFields[1] === form.ciudad) parts[1] = previous.split('-')[1] || '';
+        const nextPrefix = parts.join('-');
+        return nextPrefix === '---' && !suffix ? '' : nextPrefix + suffix;
       });
-    }, [form.unidadSoporte, form.ciudad, form.cliente, institutions, readOnly, busy, pendingSave, record, numberReserved]);
+    }, [currentUser?.siglas, form.ciudad, form.cliente, institutions, readOnly, busy, pendingSave, record, numberReserved]);
     const snapshot = () => ({ schemaVersion: 1, reportNumber, brandId: brand.id, form, equipoRows, repuestoRows, repuestosEnabled, documentId, signatures, signatureMeta });
     const contentKey = JSON.stringify({ reportNumber, brandId: brand.id, form, equipoRows, repuestoRows, repuestosEnabled, documentId });
     useEffect(() => {
@@ -675,7 +675,7 @@
     }, [currentUser]);
     const normalizeInstitution = value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLocaleLowerCase();
     const selectedInstitution = institutions.find(item => [item.name, item.code, item.name + ' (' + item.code + ')'].some(value => normalizeInstitution(value) === normalizeInstitution(form.cliente)));
-    const hasUnsaved = record ? JSON.stringify(stableValue(snapshot())) !== JSON.stringify(stableValue(record.payload)) : !readOnly && ((reportNumber && reportNumber !== reportPrefix(form, institutions)) || pendingSave || Object.entries(form).some(([key, value]) => key !== 'fecha' && !(key === 'unidadSoporte' && value === currentUser?.siglas) && (Array.isArray(value) ? value.length : value)) ||
+    const hasUnsaved = record ? JSON.stringify(stableValue(snapshot())) !== JSON.stringify(stableValue(record.payload)) : !readOnly && ((reportNumber && reportNumber !== reportPrefix(form, institutions, currentUser)) || pendingSave || Object.entries(form).some(([key, value]) => key !== 'fecha' && (Array.isArray(value) ? value.length : value)) ||
       equipoRows.some(row => Object.values(row).some(Boolean)) || repuestoRows.some(row => Object.values(row).some(Boolean)) || Object.values(signatures).some(Boolean));
 
     useEffect(() => {
@@ -715,7 +715,7 @@
     }
     function applyRecord(saved, editable = false) {
       const data = saved.payload;
-      numberingFields.current = JSON.stringify([data.form.unidadSoporte, data.form.ciudad, data.form.cliente, institutions.map(i => i.code)]);
+      numberingFields.current = JSON.stringify([currentUser?.siglas, data.form.ciudad, data.form.cliente, institutions.map(i => i.code)]);
       setRecord(saved); setNumberReserved(true); setShowAdditional(Boolean(data.signatures.adicional)); setReportNumber(saved.number); setBrandId(data.brandId); setChoosingBrand(false);
       setForm(data.form); setEquipoRows(data.equipoRows); setRepuestoRows(data.repuestoRows);
       const nextDocumentId = data.documentId || crypto.randomUUID();
@@ -737,7 +737,7 @@
     async function ensureNumber() {
       if (record || numberReserved) return reportNumber;
       const prefix = reportNumber.replace(/[0-9]+$/, '').toUpperCase();
-      if (!/^[A-Z0-9]+\.[A-Z0-9]+\.[A-Z0-9]+\.$/.test(prefix)) throw new Error('Completa unidad, ciudad y cliente para asignar el número del reporte.');
+      if (!/^[A-Z0-9]+-[A-Z0-9]+-[A-Z0-9]+-$/.test(prefix)) throw new Error('Completa ciudad y cliente para asignar el número del reporte.');
       const result = await ReportAPI.request('/reports/number', { method: 'POST', body: { documentId, prefix } });
       ReactDOM.flushSync(() => { setReportNumber(result.number); setNumberReserved(true); });
       return result.number;
@@ -830,7 +830,7 @@
       setSignatures({ tecnico: '', cliente: '', adicional: '' });
       setSignatureTarget(null);
       setReportNumber('');
-      setForm({ ...createInitialForm(), unidadSoporte: user?.siglas || '' });
+      setForm(createInitialForm());
       setEquipoRows(createInitialEquipoRows());
       setRepuestoRows(createInitialRepuestoRows());
     }
@@ -1013,7 +1013,7 @@
                 <label>Ciudad</label>
                 <input type="text" id="ciudad" list="report-cities" value=${form.ciudad} onInput=${updateField('ciudad')} />
                 <datalist id="report-cities">${REPORT_CITIES.map(([name, code]) => html`<option key=${code} value=${name}>${code.toUpperCase()}</option>`)}</datalist>
-                ${form.ciudad && !reportPrefix(form, institutions).split('.')[1] && html`<small>Escribe la sigla de esta ciudad en el número de reporte.</small>`}
+                ${form.ciudad && !reportPrefix(form, institutions, currentUser).split('-')[1] && html`<small>Escribe la sigla de esta ciudad en el número de reporte.</small>`}
               </div>
               <div className="field compact">
                 <label>Área solicitante</label>

@@ -64,8 +64,8 @@ export function createApp(pool, config) {
   app.get('/api/auth/me', (req, res) => res.json(req.user));
   registerSignerRoutes(app, pool, config);
   app.post('/api/reports/number', async (req, res) => {
-    const data = parse(z.object({ documentId: z.uuid(), prefix: z.string().trim().toUpperCase().max(40).regex(/^[A-Z0-9]+\.[A-Z0-9]+\.[A-Z0-9]+\.$/) }).strict(), req.body);
-    res.json({ number: await reserveNumber(pool, req.userId, data.documentId, data.prefix) });
+    const data = parse(z.object({ documentId: z.uuid(), prefix: z.string().trim().toUpperCase().max(40).regex(/^[A-Z0-9]+[.-][A-Z0-9]+[.-][A-Z0-9]+[.-]$/) }).strict(), req.body);
+    res.json({ number: await reserveNumber(pool, req.userId, data.documentId, [req.user.siglas.replace(/[^a-z0-9]/gi, '').toUpperCase(), ...data.prefix.split(/[.-]/).slice(1)].join('-')) });
   });
   app.get('/api/reports', async (req, res) => {
     const f = parse(filtersSchema, req.query);

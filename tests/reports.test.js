@@ -56,20 +56,20 @@ test('API requires real authentication; two devices share one account', async ()
 const pngSignature = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=';
 test('atomic persistent sequence belongs to each user across cities, clients and retries', async () => {
   const documentId = randomUUID();
-  const repeated = await Promise.all(Array.from({ length: 5 }, () => request('/reports/number','POST',{documentId,prefix:'ts.uio.hvq.'})));
+  const repeated = await Promise.all(Array.from({ length: 5 }, () => request('/reports/number','POST',{documentId,prefix:'wrong-uio-hvq-'})));
   repeated.forEach(r => assert.equal(r.status,200));
-  assert.deepEqual(new Set(repeated.map(r=>r.data.number)),new Set(['TS.UIO.HVQ.001']));
-  const next = await signable(tokenA,'TS.GYE.OMNI.'); assert.equal(next.reportNumber,'TS.GYE.OMNI.002');
-  const other = await signable(tokenOther,'SU.CUE.CA.'); assert.equal(other.reportNumber,'SU.CUE.CA.001');
+  assert.deepEqual(new Set(repeated.map(r=>r.data.number)),new Set(['TS-UIO-HVQ-001']));
+  const next = await signable(tokenA,'TS-GYE-OMNI-'); assert.equal(next.reportNumber,'TS-GYE-OMNI-002');
+  const other = await signable(tokenOther,'SU-CUE-CA-'); assert.equal(other.reportNumber,'SU-CUE-CA-001');
   const simultaneous = await Promise.all(Array.from({length:6},()=>signable()));
   assert.equal(new Set(simultaneous.map(p=>p.reportNumber)).size,6);
-  assert.deepEqual(simultaneous.map(p=>Number(p.reportNumber.split('.').at(-1))).sort((a,b)=>a-b),[3,4,5,6,7,8]);
+  assert.deepEqual(simultaneous.map(p=>Number(p.reportNumber.split('-').at(-1))).sort((a,b)=>a-b),[3,4,5,6,7,8]);
   const lower = { ...next, reportNumber: next.reportNumber.toLowerCase() };
   const body={requestId:randomUUID(),payload:lower};
   const saves=await Promise.all(Array.from({length:3},()=>request('/reports','POST',body)));
   saves.forEach(r=>assert.equal(r.status,201,JSON.stringify(r.data)));
   assert.equal(new Set(saves.map(r=>r.data.id)).size,1); saved=saves[0].data;
-  assert.equal(saved.number,'TS.GYE.OMNI.002'); assert.equal(saved.payload.reportNumber,saved.number);
+  assert.equal(saved.number,'TS-GYE-OMNI-002'); assert.equal(saved.payload.reportNumber,saved.number);
   assert.equal(saved.status,'draft');
   assert.equal((await request('/reports','POST',{...body,payload:{...lower,brandId:'mancheno'}})).status,409);
   assert.equal((await request('/reports','POST',{requestId:randomUUID(),payload:payload()})).status,409);
@@ -79,7 +79,7 @@ test('editing keeps record and number, persists every Results field and detects 
   const original = await request('/reports/'+saved.id,'GET',null,tokenB);
   const edited=structuredClone(original.data.payload);
   Object.assign(edited.form,{horaInicio:'08:15',horaFinal:'10:45',firstTimeFix:'No',estadoFinal:'No habilitado',tecnico:'Responsable',observaciones:'Resultado persistente'});
-  const changedNumber={...edited,reportNumber:'TS.UIO.HVQ.999'};
+  const changedNumber={...edited,reportNumber:'TS-UIO-HVQ-999'};
   assert.equal((await request('/reports/'+saved.id,'PATCH',{version:1,payload:changedNumber})).status,409);
   const competing=structuredClone(edited);competing.form.observaciones='Otro dispositivo';
   const results=await Promise.all([request('/reports/'+saved.id,'PATCH',{version:1,payload:edited}),request('/reports/'+saved.id,'PATCH',{version:1,payload:competing},tokenB)]);
@@ -134,8 +134,8 @@ test('private history, disabled duplication, deletion and non-reusable numbers',
   await assert.rejects(pool.query('DELETE FROM reports WHERE id=$1',[id]),{code:'23514'});
   assert.equal((await request('/reports/'+id,'DELETE')).status,204);
   assert.equal((await request('/reports/'+id)).status,404);
-  assert.equal((await request('/reports/number','POST',{documentId:content.documentId,prefix:'TS.UIO.HVQ.'})).status,409);
-  const next=await signable();assert.ok(Number(next.reportNumber.split('.').at(-1))>Number(content.reportNumber.split('.').at(-1)));
+  assert.equal((await request('/reports/number','POST',{documentId:content.documentId,prefix:'TS-UIO-HVQ-'})).status,409);
+  const next=await signable();assert.ok(Number(next.reportNumber.split('-').at(-1))>Number(content.reportNumber.split('-').at(-1)));
 });
 
 test('saved results and counters survive restart; logout and CORS preserve isolation', async () => {
@@ -144,7 +144,7 @@ test('saved results and counters survive restart; logout and CORS preserve isola
   server=createApp(pool,config).listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));
   base='http://127.0.0.1:'+server.address().port;
   assert.deepEqual((await request('/reports/'+saved.id,'GET',null,tokenB)).data,before);
-  const next=await signable();assert.ok(Number(next.reportNumber.split('.').at(-1))>8);
+  const next=await signable();assert.ok(Number(next.reportNumber.split('-').at(-1))>8);
   const denied=await fetch(base+'/api/reports',{headers:{Origin:'https://untrusted.example',Authorization:'Bearer '+tokenB}});assert.equal(denied.status,403);
   const temporary=(await request('/auth/login','POST',{user:config.username,password},'')).data.token;
   assert.equal((await request('/auth/logout','POST',null,temporary)).status,204);
@@ -167,7 +167,7 @@ async function freshToken() {
   const login = await request('/auth/login', 'POST', { user: config.username, password }, '');
   return login.data.token;
 }
-async function signable(token = tokenA, prefix = 'TS.UIO.HVQ.') {
+async function signable(token = tokenA, prefix = 'TS-UIO-HVQ-') {
   const content = { ...payload(), documentId: randomUUID(), signatureMeta: { tecnico: null, cliente: null, adicional: null } };
   const response = await request('/reports/number','POST',{ documentId: content.documentId, prefix },token);
   assert.equal(response.status,200,JSON.stringify(response.data)); content.reportNumber = response.data.number;
