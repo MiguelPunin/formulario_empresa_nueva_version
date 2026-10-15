@@ -81,3 +81,11 @@ La migración debe ejecutarse en cada base donde se publique el cambio, antes de
 - Navegador real: flujo de OMNI con responsable existente en escritorio; institución vacía y alta en móvil; carga de imagen, confirmación, guardado y ausencia de errores JavaScript.
 - PDF real generado y revisado visualmente: firma, tratamiento, nombre y documento manual presentes; firma adicional vacía oculta.
 - Build y comprobación de diferencias de Git.
+
+## Cuarta firma y técnico autenticado
+
+Los reportes admiten servicio técnico, cliente y dos firmas adicionales opcionales (`adicional` y `adicional2`). Después de la firma del cliente solo se pueden agregar las adicionales vacías; las existentes y el contenido permanecen protegidos tanto en API como en PostgreSQL. Los reportes anteriores no necesitan modificarse.
+
+La firma técnica usa el nombre de la sesión y el título `Ing.` impuestos por el servidor. El diálogo muestra esos datos como texto y permite ingresar únicamente la cédula opcional.
+
+Las migraciones de esta versión amplían los roles de firma y crean la cuenta `demo` con iniciales `DEMO`, sin reemplazar cuentas existentes. Su contraseña se almacena como hash. Ejecutar `npm run migrate` antes de iniciar el servidor. Validación: 21 pruebas y recorrido de navegador con las cuatro firmas, bloqueo, edición, PDF y móvil.

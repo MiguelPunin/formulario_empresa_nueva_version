@@ -1,0 +1,2 @@
+exports.up = pgm => pgm.sql(`INSERT INTO users(username,full_name,support_initials,password_hash) VALUES('demo','Demo','DEMO','scrypt$70a7306a685d30372d15f645d9fe5c65$e3391df51db4b48bbc899880a094d66f41a9584beba354b4022d3a5f45c1f0dccbdf92dc49ba39753eb71dc3cbcbd73d7de9370b356c9e983553370d386ca7a7') ON CONFLICT(username) DO NOTHING;`);
+exports.down = () => { throw new Error('No eliminar cuentas con reportes.'); };

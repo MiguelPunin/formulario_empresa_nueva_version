@@ -252,7 +252,7 @@
     const busyRef = useRef(false);
     const [phase, setPhase] = useState('loading');
     const [code, setCode] = useState('');
-    const [identity, setIdentity] = useState({ name: role === 'tecnico' ? user.nombre : '', identification: '', title: '' });
+    const [identity, setIdentity] = useState({ name: role === 'tecnico' ? user.nombre : '', identification: '', title: role === 'tecnico' ? 'Ing.' : '' });
     useEffect(() => {
       ReportAPI.request('/signers/settings').then(settings => {
         if (active.current) setPhase(settings.requireSignatureCode && role !== 'tecnico' ? 'code' : 'manual');
@@ -302,8 +302,9 @@
         <h2 id="authorization-title">${phase === 'code' ? 'Autorización de firma' : 'Confirmación de firma'}</h2>
         <p>${label}</p>
         ${phase === 'loading' && html`<p>Cargando…</p>`}
-        ${phase === 'manual' && html`<p>${role === 'tecnico' ? 'El nombre corresponde a tu sesión. Cédula y cargo son opcionales.' : 'Datos opcionales. Puedes dejarlos en blanco.'}</p>
-          ${[['name', 'Nombres y apellidos'], ['identification', 'Cédula / documento'], ['title', 'Título / cargo']].map(([field, text]) => html`
+        ${phase === 'manual' && html`<p>${role === 'tecnico' ? 'El nombre y título corresponden a tu sesión. La cédula es opcional.' : 'Datos opcionales. Puedes dejarlos en blanco.'}</p>
+          ${role === 'tecnico' && html`<p><strong>Ing. ${user.nombre}</strong></p>`}
+          ${(role === 'tecnico' ? [['identification', 'Cédula / documento']] : [['name', 'Nombres y apellidos'], ['identification', 'Cédula / documento'], ['title', 'Título / cargo']]).map(([field, text]) => html`
             <label className="authorization-code">${text}
               <input type="text" maxLength="500" value=${identity[field]} disabled=${loading} readOnly=${role === 'tecnico' && field === 'name'}
                 onInput=${event => setIdentity(previous => ({ ...previous, [field]: event.target.value }))} /></label>`)}
@@ -614,16 +615,17 @@
     const numberingFields = useRef('');
     const [numberReserved, setNumberReserved] = useState(false);
     const [showAdditional, setShowAdditional] = useState(false);
+    const [showFourth, setShowFourth] = useState(false);
     const [form, setForm] = useState(createInitialForm);
     const [equipoRows, setEquipoRows] = useState(createInitialEquipoRows);
     const [repuestoRows, setRepuestoRows] = useState(createInitialRepuestoRows);
     const [repuestosEnabled, setRepuestosEnabled] = useState(true);
     const [pdfGenerating, setPdfGenerating] = useState(false);
     const sheetRef = useRef(null);
-    const [signatures, setSignatures] = useState({ tecnico: '', cliente: '', adicional: '' });
+    const [signatures, setSignatures] = useState({ tecnico: '', cliente: '', adicional: '', adicional2: '' });
     const [signatureTarget, setSignatureTarget] = useState(null);
     const [documentId, setDocumentId] = useState(() => crypto.randomUUID());
-    const [signatureMeta, setSignatureMeta] = useState({ tecnico: null, cliente: null, adicional: null });
+    const [signatureMeta, setSignatureMeta] = useState({ tecnico: null, cliente: null, adicional: null, adicional2: null });
     const signedContent = useRef(null);
     const [institutions, setInstitutions] = useState([]);
     const [requireSignatureCode, setRequireSignatureCode] = useState(null);
@@ -659,7 +661,7 @@
     const contentKey = JSON.stringify({ reportNumber, brandId: brand.id, form, equipoRows, repuestoRows, repuestosEnabled, documentId });
     useEffect(() => {
       if (!readOnly && signedContent.current && signedContent.current !== contentKey) {
-        setSignatures({ tecnico: '', cliente: '', adicional: '' }); setSignatureMeta({ tecnico: null, cliente: null, adicional: null });
+        setSignatures({ tecnico: '', cliente: '', adicional: '', adicional2: '' }); setSignatureMeta({ tecnico: null, cliente: null, adicional: null, adicional2: null });
         signedContent.current = null;
         setMessage('El contenido cambió. Autoriza y realiza nuevamente las firmas antes de confirmar.');
       }
@@ -716,14 +718,14 @@
     function applyRecord(saved, editable = false) {
       const data = saved.payload;
       numberingFields.current = JSON.stringify([currentUser?.siglas, data.form.ciudad, data.form.cliente, institutions.map(i => i.code)]);
-      setRecord(saved); setNumberReserved(true); setShowAdditional(Boolean(data.signatures.adicional)); setReportNumber(saved.number); setBrandId(data.brandId); setChoosingBrand(false);
+      setRecord(saved); setNumberReserved(true); setShowAdditional(Boolean(data.signatures.adicional)); setShowFourth(Boolean(data.signatures.adicional2)); setReportNumber(saved.number); setBrandId(data.brandId); setChoosingBrand(false);
       setForm(data.form); setEquipoRows(data.equipoRows); setRepuestoRows(data.repuestoRows);
       const nextDocumentId = data.documentId || crypto.randomUUID();
       setDocumentId(nextDocumentId);
       setRepuestosEnabled(data.repuestosEnabled);
       const legacyEditable = editable && saved.status !== 'confirmed' && !data.signatureMeta;
-      setSignatures(legacyEditable ? { tecnico: '', cliente: '', adicional: '' } : data.signatures);
-      setSignatureMeta(data.signatureMeta || { tecnico: null, cliente: null, adicional: null });
+      setSignatures(legacyEditable ? { tecnico: '', cliente: '', adicional: '', adicional2: '' } : data.signatures);
+      setSignatureMeta(data.signatureMeta || { tecnico: null, cliente: null, adicional: null, adicional2: null });
       signedContent.current = JSON.stringify({ reportNumber: saved.number, brandId: data.brandId, form: data.form, equipoRows: data.equipoRows,
         repuestoRows: data.repuestoRows, repuestosEnabled: data.repuestosEnabled, documentId: nextDocumentId });
       setReadOnly(!editable || saved.status === 'confirmed'); setPendingSave(null); setSignatureTarget(null);
@@ -744,7 +746,7 @@
     }
     async function beginSignature(key) {
       if (busyRef.current) return;
-      if (readOnly && (record?.status !== 'confirmed' || key !== 'adicional' || record.payload.signatures.adicional)) return;
+      if (readOnly && (record?.status !== 'confirmed' || !['adicional','adicional2'].includes(key) || record.payload.signatures[key])) return;
       if (!form.cliente.trim() || !form.fecha) { setError('Completa cliente y fecha antes de firmar.'); return; }
       if (key === 'cliente' && (requireSignatureCode === null || (!requireSignatureCode && !selectedInstitution))) {
         setError('Selecciona una institución del catálogo antes de firmar como cliente.'); return;
@@ -758,7 +760,7 @@
       if (busyRef.current) return;
       busyRef.current = true; setBusy(true); setError(''); setMessage('');
       try {
-        if (record?.status === 'confirmed' && signatures.adicional === record.payload.signatures.adicional) { if (andPrint) await printReady(); return; }
+        if (record?.status === 'confirmed' && ['adicional','adicional2'].every(role => (signatures[role] || '') === (record.payload.signatures[role] || ''))) { if (andPrint) await printReady(); return; }
         if (readOnly && record?.status !== 'confirmed') { if (andPrint) await printReady(); else throw new Error('Abre el reporte con Editar desde el historial.'); return; }
         if (!form.cliente.trim()) throw new Error('Ingresa el hospital o cliente antes de guardar.');
         if (!form.fecha) throw new Error('Ingresa la fecha del reporte.');
@@ -822,12 +824,12 @@
     }
 
     function clearForm(user = currentUser) {
-      numberingFields.current = ''; setNumberReserved(false); setShowAdditional(false);
+      numberingFields.current = ''; setNumberReserved(false); setShowAdditional(false); setShowFourth(false);
       setDocumentId(crypto.randomUUID()); signedContent.current = null;
-      setSignatureMeta({ tecnico: null, cliente: null, adicional: null });
+      setSignatureMeta({ tecnico: null, cliente: null, adicional: null, adicional2: null });
       setRecord(null); setReadOnly(false); setPendingSave(null); setError(''); setMessage('');
       setRepuestosEnabled(true);
-      setSignatures({ tecnico: '', cliente: '', adicional: '' });
+      setSignatures({ tecnico: '', cliente: '', adicional: '', adicional2: '' });
       setSignatureTarget(null);
       setReportNumber('');
       setForm(createInitialForm());
@@ -976,7 +978,7 @@
               <button className="secondary" disabled=${busy || !!pendingSave || readOnly} type="button" onClick=${() => setChoosingBrand(true)}>Cambiar logo</button>
               <button className="secondary" disabled=${busy} type="button" onClick=${() => setHistoryOpen(true)}>Historial de reportes</button>
               <button className="secondary" disabled=${busy} id="logoutBtn" type="button" onClick=${handleLogout}>Salir</button>
-              ${(!readOnly || (record?.status === 'confirmed' && signatures.adicional && !record.payload.signatures.adicional)) && html`<button disabled=${busy} type="button" onClick=${() => saveReport(false)}>${busy ? 'Guardando…' : pendingSave ? 'Reintentar guardado' : 'Guardar reporte'}</button>`}
+              ${(!readOnly || (record?.status === 'confirmed' && ['adicional','adicional2'].some(role => signatures[role] && !record.payload.signatures[role]))) && html`<button disabled=${busy} type="button" onClick=${() => saveReport(false)}>${busy ? 'Guardando…' : pendingSave ? 'Reintentar guardado' : 'Guardar reporte'}</button>`}
               <button id="pdfBtn" type="button" disabled=${pdfGenerating || busy} onClick=${() => saveReport(true)}>
                 ${pdfGenerating ? 'Generando...' : record?.status === 'confirmed' ? 'Descargar PDF' : 'Guardar e imprimir'}
               </button>
@@ -987,7 +989,7 @@
           <div className="report-notices">
             ${message && html`<p role="status">${message}</p>`}
             ${error && html`<p role="alert" className="report-error">${error}</p>`}
-            ${readOnly && html`<p>Vista protegida · ${record?.status === 'confirmed' ? 'Confirmado' : 'Borrador'}. ${record?.status === 'confirmed' ? 'El cliente aprobó este reporte. Solo puedes añadir la firma adicional pendiente.' : 'Para modificarlo, selecciona Editar en el historial.'}</p>`}
+            ${readOnly && html`<p>Vista protegida · ${record?.status === 'confirmed' ? 'Confirmado' : 'Borrador'}. ${record?.status === 'confirmed' ? 'El cliente aprobó este reporte. Solo puedes añadir las firmas adicionales pendientes.' : 'Para modificarlo, selecciona Editar en el historial.'}</p>`}
             ${pendingSave && !busy && html`<p>El guardado aún no está confirmado. Usa Reintentar guardado: no creará un duplicado. Si necesitas corregir datos, revisa primero el historial.</p>`}
           </div>
           <fieldset className="content report-fields" id="report" disabled=${readOnly || busy || !!pendingSave}>
@@ -1358,14 +1360,15 @@
           </fieldset>
           <div className="content">
             ${!showAdditional && !signatures.adicional && (!readOnly || record?.status === 'confirmed') && html`<button type="button" className="secondary signature-controls" disabled=${busy || !!pendingSave} onClick=${() => setShowAdditional(true)}>Añadir firma adicional</button>`}
-            <div className=${'signature' + (signatures.adicional ? ' has-additional-signature' : '')}>
-              ${[['tecnico', 'Servicio técnico'], ['cliente', 'Cliente'], ...((showAdditional || signatures.adicional) ? [['adicional', 'Firma adicional (opcional)']] : [])].map(([key, label]) => html`
-                <div key=${key} className=${'signature-slot' + (key === 'adicional' && !signatures[key] ? ' empty-additional-signature' : '')}>
+            ${!showFourth && !signatures.adicional2 && (!readOnly || record?.status === 'confirmed') && html`<button type="button" className="secondary signature-controls" disabled=${busy || !!pendingSave} onClick=${() => { setShowAdditional(true); setShowFourth(true); }}>Añadir cuarta firma</button>`}
+            <div className=${'signature' + (signatures.adicional2 ? ' has-four-signatures' : signatures.adicional ? ' has-additional-signature' : '')}>
+              ${[['tecnico', 'Servicio técnico'], ['cliente', 'Cliente'], ...((showAdditional || signatures.adicional) ? [['adicional', 'Firma adicional (opcional)']] : []), ...((showFourth || signatures.adicional2) ? [['adicional2', 'Cuarta firma (opcional)']] : [])].map(([key, label]) => html`
+                <div key=${key} className=${'signature-slot' + (['adicional','adicional2'].includes(key) && !signatures[key] ? ' empty-additional-signature' : '')}>
                   <div className="signature-controls">
-                    <button type="button" className="secondary" disabled=${busy || !!pendingSave || (readOnly && (key !== 'adicional' || record?.status !== 'confirmed' || !!record.payload.signatures.adicional))} onClick=${() => beginSignature(key)}>
+                    <button type="button" className="secondary" disabled=${busy || !!pendingSave || (readOnly && (!['adicional','adicional2'].includes(key) || record?.status !== 'confirmed' || !!record.payload.signatures[key]))} onClick=${() => beginSignature(key)}>
                       ${signatures[key] ? 'Editar firma' : 'Firmar / cargar imagen'} — ${label}
                     </button>
-                    ${signatures[key] && (!readOnly || (key === 'adicional' && !record?.payload.signatures.adicional)) && html`<button type="button" disabled=${busy || !!pendingSave} className="secondary"
+                    ${signatures[key] && (!readOnly || (['adicional','adicional2'].includes(key) && !record?.payload.signatures[key])) && html`<button type="button" disabled=${busy || !!pendingSave} className="secondary"
                       onClick=${() => { setSignatures(prev => ({ ...prev, [key]: '' })); setSignatureMeta(prev => ({ ...prev, [key]: null })); }}>Quitar firma</button>`}
                   </div>
                   <div className="signature-space">
@@ -1396,7 +1399,7 @@
             setSignatureTarget(null);
           }} />`}
         ${currentUser && signatureTarget && (signatureTarget !== 'cliente' || requireSignatureCode) && html`<${SignatureAuthorization}
-          label=${signatureTarget === 'tecnico' ? 'servicio técnico' : signatureTarget === 'cliente' ? 'cliente' : 'firma adicional'}
+          label=${signatureTarget === 'tecnico' ? 'servicio técnico' : signatureTarget === 'cliente' ? 'cliente' : signatureTarget === 'adicional2' ? 'cuarta firma' : 'firma adicional'}
           role=${signatureTarget} payload=${snapshot()} user=${currentUser}
           onClose=${() => setSignatureTarget(null)}
           onSave=${(image, metadata) => {

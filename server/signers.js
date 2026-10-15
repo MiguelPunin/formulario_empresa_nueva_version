@@ -40,14 +40,14 @@ export function registerSignerRoutes(app, pool, config) {
   app.get('/api/signers/settings', (req, res) => res.json({ requireSignatureCode: Boolean(config.requireSignatureCode) }));
   app.post('/api/signers/manual', async (req, res) => {
     const optionalText = z.string().trim().max(500).default('');
-    const data = parse(z.object({ role: z.enum(['tecnico','cliente','adicional']), payload: payloadSchema,
+    const data = parse(z.object({ role: z.enum(['tecnico','cliente','adicional','adicional2']), payload: payloadSchema,
       name: optionalText, identification: optionalText, title: optionalText }).strict(), req.body);
     if (config.requireSignatureCode && data.role !== 'tecnico') throw fail('La firma requiere código.');
     if (data.role === 'cliente') throw fail('Selecciona un responsable de la institución para firmar como cliente.', 400);
     if (!data.payload.documentId) throw fail('Inicia un nuevo reporte antes de firmar.', 400);
     await checkNumber(req.userId, data.payload);
     const snapshot = { signerId: null, signerName: data.role === 'tecnico' ? req.user.nombre : data.name, signerIdentification: data.identification,
-      signerTitle: data.title, demo: false, acceptanceText };
+      signerTitle: data.role === 'tecnico' ? 'Ing.' : data.title, demo: false, acceptanceText };
     const grant = await pool.query(`INSERT INTO signature_authorizations(owner_id,signer_id,credential_version,document_id,role,content_hash,signer_snapshot)
       VALUES($1,NULL,$6,$2,$3,$4,$5) RETURNING id`,
     [req.userId, data.payload.documentId, data.role, contentHash(data.payload), snapshot, data.role === 'tecnico' ? 'authenticated-user-v1' : 'manual-v1']);
@@ -111,7 +111,7 @@ export function registerSignerRoutes(app, pool, config) {
     standardHeaders: 'draft-8', legacyHeaders: false,
     message: { error: 'Demasiados intentos de firma. Espera 15 minutos antes de volver a intentar.' },
   }), async (req, res) => {
-    const data = parse(z.object({ code: z.string().min(1).max(128), role: z.enum(['tecnico','cliente','adicional']), payload: payloadSchema }).strict(), req.body);
+    const data = parse(z.object({ code: z.string().min(1).max(128), role: z.enum(['tecnico','cliente','adicional','adicional2']), payload: payloadSchema }).strict(), req.body);
     if (data.role === 'tecnico') throw fail('La firma técnica debe pertenecer al usuario autenticado.',400);
     if (!config.signerCodePepper) throw fail('La autorización de firmas aún no está configurada.', 503);
     if (!data.payload.documentId) throw fail('Inicia un nuevo reporte antes de firmar.', 400);
@@ -174,7 +174,7 @@ function validCredential(row, config) {
 }
 
 export async function verifyReportSignatures(client, ownerId, payload, reportId, config = {}, previous = null) {
-  for (const role of ['tecnico','cliente','adicional']) {
+  for (const role of ['tecnico','cliente','adicional','adicional2']) {
     const image = payload.signatures[role], supplied = payload.signatureMeta?.[role];
     if (!image) { if (supplied) throw fail('La identidad requiere una firma.', 400); continue; }
     if (previous && contentHash(previous) === contentHash(payload) && previous.signatures[role] === image

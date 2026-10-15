@@ -1209,5 +1209,6 @@
     .history-delete { color: #a32323; border-color: #e5bcbc; }
 
 @media print {
+  .signature.has-four-signatures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .signature.has-additional-signature { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }

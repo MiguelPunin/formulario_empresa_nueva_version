@@ -18,7 +18,7 @@ export const payloadSchema = z.object({
   reportNumber: z.string().trim().toUpperCase().max(60).optional(),
   schemaVersion: z.literal(1), brandId: z.enum(['totalcare', 'pharmadial', 'mancheno']),
   repuestosEnabled: z.boolean(), documentId: z.uuid().optional(),
-  signatureMeta: z.object({ tecnico: signerMetadata.nullable(), cliente: signerMetadata.nullable(), adicional: signerMetadata.nullable().optional() }).strict().optional(),
+  signatureMeta: z.object({ tecnico: signerMetadata.nullable(), cliente: signerMetadata.nullable(), adicional: signerMetadata.nullable().optional(), adicional2: signerMetadata.nullable().optional() }).strict().optional(),
   form: z.object({
     unidadSoporte: text, cliente: text.trim().min(1, 'Ingresa el cliente'), fecha: date,
     ciudad: text, areaSolicitante: text, telefono: text,
@@ -32,7 +32,7 @@ export const payloadSchema = z.object({
   equipoRows: z.array(z.object({ descripcion: text, marca: text, modelo: text, serie: text, ubicacion: text }).strict()).min(1).max(100),
   repuestoRows: z.array(z.object({ serie: text, parte: text, descripcion: text,
     cantidad: z.string().regex(/^(?:|\d{1,9})$/), }).strict()).min(1).max(100),
-  signatures: z.object({ tecnico: signature, cliente: signature, adicional: signature.optional() }).strict(),
+  signatures: z.object({ tecnico: signature, cliente: signature, adicional: signature.optional(), adicional2: signature.optional() }).strict(),
 }).strict();
 export const createSchema = z.object({ requestId: z.uuid(), payload: payloadSchema }).strict();
 export const finalizeSchema = z.object({ version: z.number().int().positive(), payload: payloadSchema }).strict();

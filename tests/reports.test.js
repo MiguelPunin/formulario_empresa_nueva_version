@@ -95,6 +95,7 @@ test('editing keeps record and number, persists every Results field and detects 
 test('technical identity is authenticated and does not lock the report', async () => {
   const content=await signable();await authorize(content,tokenA,'tecnico');
   assert.equal(content.signatureMeta.tecnico.signerName,'Tests');
+  assert.equal(content.signatureMeta.tecnico.signerTitle,'Ing.');
   const created=await request('/reports','POST',{requestId:randomUUID(),payload:content});
   assert.equal(created.status,201);assert.equal(created.data.status,'draft');
   const edited=structuredClone(created.data.payload);edited.form.observaciones='Cambio después de firma técnica';
@@ -103,7 +104,7 @@ test('technical identity is authenticated and does not lock the report', async (
   assert.equal((await request('/reports/'+created.data.id,'PATCH',{version:1,payload:edited})).status,200);
 });
 
-test('client alone locks API and database; only one pending additional signature can be appended', async () => {
+test('client alone locks API and database; only pending third and fourth signatures can be appended', async () => {
   const content=await signable();await authorize(content,tokenA);
   const created=await request('/reports','POST',{requestId:randomUUID(),payload:content});
   assert.equal(created.status,201,JSON.stringify(created.data));const row=created.data;assert.equal(row.status,'confirmed');
@@ -122,6 +123,15 @@ test('client alone locks API and database; only one pending additional signature
   const replacement=structuredClone(extra);await authorize(replacement,tokenA,'adicional');
   assert.equal((await request('/reports/'+row.id,'PATCH',{version:2,payload:replacement})).status,409);
   assert.equal((await request('/reports/'+row.id,'PATCH',{version:2,payload:row.payload})).status,409);
+  const fourth=structuredClone(extra);await authorize(fourth,tokenA,'adicional2');
+  const four=await request('/reports/'+row.id,'PATCH',{version:2,payload:fourth});
+  assert.equal(four.status,200,JSON.stringify(four.data));assert.equal(four.data.version,3);
+  assert.deepEqual(four.data.payload.signatureMeta.cliente,row.payload.signatureMeta.cliente);
+  const replaced=structuredClone(fourth);await authorize(replaced,tokenA,'adicional2');
+  assert.equal((await request('/reports/'+row.id,'PATCH',{version:3,payload:replaced})).status,409);
+  await assert.rejects(pool.query("UPDATE reports SET payload=jsonb_set(payload,'{signatures,adicional2}','\"invalid\"') WHERE id=$1",[row.id]),{code:'23514'});
+  assert.equal((await request('/reports/'+row.id,'PATCH',{version:3,payload:extra})).status,409);
+
 });
 
 test('private history, disabled duplication, deletion and non-reusable numbers', async () => {
@@ -174,8 +184,8 @@ async function signable(token = tokenA, prefix = 'TS-UIO-HVQ-') {
   return content;
 }
 async function authorize(content, token, role = 'cliente') {
-  const validated = role === 'tecnico' || role === 'adicional'
-    ? await request('/signers/manual','POST',{ role,payload:content,name:'Untrusted name' },token)
+  const validated = ['tecnico','adicional','adicional2'].includes(role)
+    ? await request('/signers/manual','POST',{ role,payload:content,name:'Untrusted name',title:'Untrusted title' },token)
     : await request('/signers/validate', 'POST', { code: 'test-code', role, payload: content }, token);
   assert.equal(validated.status, 200);
   const id = validated.data.authorizationId;
@@ -385,4 +395,10 @@ test('empty institutions, optional document, foreign/inactive signers and client
   assert.equal((await request('/reports', 'POST', { requestId: randomUUID(), payload: content }, token)).status, 201);
   await pool.query('UPDATE authorized_signers SET active=false WHERE id=$1', [person.id]);
   assert.equal((await request('/signers/authorize-client', 'POST', body, token)).status, 409);
+});
+
+test('demo account logs in and has private report history', async () => {
+  const login=await request('/auth/login','POST',{user:'demo',password:'demo123'},'');
+  assert.equal(login.status,200);assert.equal(login.data.user.nombre,'Demo');
+  assert.equal((await request('/reports','GET',null,login.data.token)).data.total,0);
 });

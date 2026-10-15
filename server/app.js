@@ -149,8 +149,8 @@ export function createApp(pool, config) {
         if (previous.version !== data.version) throw fail(409, 'El reporte cambió en otro dispositivo. Vuelve a abrirlo desde el historial.');
         if (data.payload.reportNumber !== previous.number || data.payload.documentId !== previous.payload.documentId) throw fail(409, 'El número y la identidad del reporte no se pueden cambiar.');
         if (previous.status === 'confirmed') {
-          const approved = value => { const copy = structuredClone(value); delete copy.signatures.adicional; if (copy.signatureMeta) delete copy.signatureMeta.adicional; return copy; };
-          if (hashPayload(approved(previous.payload)) !== hashPayload(approved(data.payload)) || previous.payload.signatures.adicional || !data.payload.signatures.adicional) {
+          const approved = value => { const copy = structuredClone(value); for (const role of ['adicional','adicional2']) { delete copy.signatures[role]; if (copy.signatureMeta) delete copy.signatureMeta[role]; } return copy; };
+          if (hashPayload(approved(previous.payload)) !== hashPayload(approved(data.payload)) || ['adicional','adicional2'].some(role => previous.payload.signatures[role] && (previous.payload.signatures[role] !== data.payload.signatures[role] || hashPayload(previous.payload.signatureMeta?.[role] ?? null) !== hashPayload(data.payload.signatureMeta?.[role] ?? null))) || !['adicional','adicional2'].some(role => !previous.payload.signatures[role] && data.payload.signatures[role])) {
             throw fail(409, 'El cliente ya aprobó este reporte. Solo se permite añadir la firma adicional pendiente.');
           }
         }
