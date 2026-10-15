@@ -1209,6 +1209,13 @@
     .history-delete { color: #a32323; border-color: #e5bcbc; }
 
 @media print {
-  .signature.has-four-signatures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .signature.has-four-signatures { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .signature.has-additional-signature { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .signature { gap: 3mm; margin-top: 3mm; align-items: stretch; }
+  .signature-slot { display: flex; flex-direction: column; }
+  .signature-space { height: 17mm; flex: 0 0 17mm; }
+  .signature-caption { flex: 1; min-height: 9mm; margin: 0; font-size: 9px; }
+  .signature .line { margin-top: auto; font-size: 9px; }
+  .report-fields { padding: 0; }
+
 }
