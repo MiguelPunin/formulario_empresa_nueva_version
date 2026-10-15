@@ -86,3 +86,31 @@ test('migration preserves old reports/signatures, seeds counters, and retention 
     await assert.rejects(pool.query("UPDATE reports SET payload=jsonb_set(payload,'{form,observaciones}','\"changed\"') WHERE id=$1",[signedId]),{code:'23514'});
   } finally { await pool?.end();await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);await admin.end(); }
 });
+
+test('authorized Diego cleanup resets once and preserves other users', async () => {
+  const schema='reset_'+randomBytes(8).toString('hex');
+  const admin=new pg.Pool({connectionString:process.env.TEST_DATABASE_URL});let pool;
+  try {
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const url=new URL(process.env.TEST_DATABASE_URL);url.searchParams.set('options',`-c search_path=${schema},public`);
+    await runner({databaseUrl:url.toString(),dir:fileURLToPath(new URL('../server/migrations',import.meta.url)),schema,migrationsTable:'pgmigrations',direction:'up',count:12,log:()=>{}});
+    pool=new pg.Pool({connectionString:url.toString()});
+    const ids=[];
+    for(const username of ['diego.armas','untouched']) {
+      const owner=(await pool.query("INSERT INTO users(username,full_name,support_initials,password_hash) VALUES($1,$1,$2,'test') RETURNING id",[username,username==='diego.armas'?'DA':'UT'])).rows[0].id;
+      ids.push(owner);const documentId=randomUUID();const number=await reserveNumber(pool,owner,documentId,'DA-UIO-HV-');
+      await pool.query(`INSERT INTO reports(owner_id,number_reservation,customer,report_date,status,payload,payload_hash,request_id,request_hash)
+        SELECT $1,id,'Test',CURRENT_DATE,'confirmed',$3::jsonb,'test',$4,'test' FROM report_number_reservations WHERE owner_id=$1 AND document_id=$2`,
+        [owner,documentId,JSON.stringify({reportNumber:number,documentId,signatures:{cliente:'historical'}}),randomUUID()]);
+      await pool.query("INSERT INTO sessions(token_hash,credential_version,expires_at,user_id) VALUES($1,'test',now()+interval '1 hour',$2)",[username,owner]);
+    }
+    await migrate(url.toString(),schema);
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM reports WHERE owner_id=$1',[ids[0]])).rows[0].n,0);
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM reports WHERE owner_id=$1',[ids[1]])).rows[0].n,1);
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM sessions WHERE user_id=$1',[ids[0]])).rows[0].n,0);
+    assert.equal(await reserveNumber(pool,ids[0],randomUUID(),'DA-UIO-HV-'),'DA-UIO-HV-001');
+    await migrate(url.toString(),schema);
+    assert.equal(await reserveNumber(pool,ids[0],randomUUID(),'DA-GYE-OMNI-'),'DA-GYE-OMNI-002');
+    assert.equal(await reserveNumber(pool,ids[1],randomUUID(),'DA-UIO-HV-'),'DA-UIO-HV-002');
+  } finally {await pool?.end();await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);await admin.end();}
+});
