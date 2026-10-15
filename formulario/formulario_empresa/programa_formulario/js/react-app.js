@@ -1379,7 +1379,7 @@
                     ${signatureMeta[key].signerIdentification && html`<span>C.I. ${signatureMeta[key].signerIdentification}</span>`}
                     ${signatureMeta[key].demo && html`<small>DEMO · C.I. pendiente</small>`}
                   </div>`}
-                  <div className="line"><span className=${['adicional','adicional2'].includes(key) ? 'print-excluded' : ''}>${label}</span></div>
+                  <div className="line">${key === 'tecnico' ? 'Servicio técnico' : 'Cliente'}</div>
                 </div>
               `)}
             </div>
